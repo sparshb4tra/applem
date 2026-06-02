@@ -20,17 +20,23 @@ def _check_required_packages() -> None:
 
 
 def _configure_style(root: tk.Tk) -> None:
-    bg = "#fff5fb"
+    bg = "#fff7fb"
     panel = "#ffffff"
-    text = "#171017"
-    muted = "#6f6470"
-    border = "#f3bddb"
-    pink = "#ff1493"
-    pink_dark = "#d60073"
-    pink_soft = "#ffe1f1"
-    grey = "#e8e4e8"
+    text = "#1d1d1f"
+    muted = "#6e6e73"
+    border = "#d2d2d7"
+    accent = "#ff2d55"
+    accent_dark = "#d7003f"
+    soft_accent = "#fff0f4"
+    control = "#ffffff"
+    control_hover = "#f2f2f4"
+    control_pressed = "#e8e8ed"
+    disabled = "#eeeeef"
+    danger = "#ff3b30"
+    danger_dark = "#d70015"
+    black = "#1d1d1f"
     font = ("Helvetica", 11, "bold")
-    title_font = ("Helvetica", 18, "bold")
+    title_font = ("Helvetica", 19, "bold")
 
     style = ttk.Style(root)
     style.theme_use("clam")
@@ -41,25 +47,55 @@ def _configure_style(root: tk.Tk) -> None:
     style.configure(".", font=font, background=bg, foreground=text)
     style.configure("TFrame", background=bg)
     style.configure("TLabel", background=bg, foreground=text, font=font)
-    style.configure("Title.TLabel", background=bg, foreground=pink, font=title_font)
+    style.configure("Title.TLabel", background=bg, foreground=text, font=title_font)
     style.configure("Muted.TLabel", background=bg, foreground=muted, font=font)
 
     style.configure(
         "TButton",
         padding=(12, 8),
-        background=pink,
-        foreground="#ffffff",
-        bordercolor=pink_dark,
-        lightcolor=pink,
-        darkcolor=pink_dark,
+        background=control,
+        foreground=text,
+        bordercolor=border,
+        lightcolor=control,
+        darkcolor=border,
         relief="flat",
         font=font,
     )
     style.map(
         "TButton",
-        background=[("disabled", grey), ("pressed", pink_dark), ("active", pink_dark)],
+        background=[("disabled", disabled), ("pressed", control_pressed), ("active", control_hover)],
+        foreground=[("disabled", muted), ("pressed", text), ("active", text)],
+        bordercolor=[("disabled", disabled), ("pressed", border), ("active", border)],
+    )
+
+    style.configure(
+        "Primary.TButton",
+        background=black,
+        foreground="#ffffff",
+        bordercolor=black,
+        lightcolor=black,
+        darkcolor=black,
+    )
+    style.map(
+        "Primary.TButton",
+        background=[("disabled", disabled), ("pressed", "#000000"), ("active", "#2c2c2e")],
         foreground=[("disabled", muted), ("pressed", "#ffffff"), ("active", "#ffffff")],
-        bordercolor=[("disabled", grey), ("pressed", pink_dark), ("active", pink_dark)],
+        bordercolor=[("disabled", disabled), ("pressed", "#000000"), ("active", "#2c2c2e")],
+    )
+
+    style.configure(
+        "Danger.TButton",
+        background=control,
+        foreground=danger,
+        bordercolor=border,
+        lightcolor=control,
+        darkcolor=border,
+    )
+    style.map(
+        "Danger.TButton",
+        background=[("disabled", disabled), ("pressed", "#fff2f1"), ("active", "#fff5f4")],
+        foreground=[("disabled", muted), ("pressed", danger_dark), ("active", danger_dark)],
+        bordercolor=[("disabled", disabled), ("pressed", danger), ("active", danger)],
     )
 
     style.configure(
@@ -69,28 +105,28 @@ def _configure_style(root: tk.Tk) -> None:
         background=panel,
         foreground=text,
         bordercolor=border,
-        insertcolor=pink,
+        insertcolor=accent,
         relief="flat",
         font=font,
     )
-    style.map("TEntry", bordercolor=[("focus", pink), ("!focus", border)])
+    style.map("TEntry", bordercolor=[("focus", accent), ("!focus", border)])
 
     style.configure(
         "TCombobox",
         padding=5,
         fieldbackground=panel,
-        background=pink_soft,
+        background=control,
         foreground=text,
         bordercolor=border,
-        arrowcolor=pink,
+        arrowcolor=muted,
         relief="flat",
         font=font,
     )
     style.map(
         "TCombobox",
         fieldbackground=[("readonly", panel)],
-        bordercolor=[("focus", pink), ("!focus", border)],
-        arrowcolor=[("active", pink_dark), ("!active", pink)],
+        bordercolor=[("focus", accent), ("!focus", border)],
+        arrowcolor=[("active", accent), ("!active", muted)],
     )
 
     style.configure(
@@ -99,30 +135,30 @@ def _configure_style(root: tk.Tk) -> None:
         background=bg,
         foreground=text,
         indicatorbackground=panel,
-        indicatorforeground=pink,
+        indicatorforeground=accent,
         font=font,
     )
     style.map(
         "TCheckbutton",
         background=[("active", bg)],
-        foreground=[("disabled", muted), ("active", pink_dark)],
-        indicatorbackground=[("selected", pink), ("!selected", panel)],
+        foreground=[("disabled", muted), ("active", text)],
+        indicatorbackground=[("selected", accent), ("!selected", panel)],
     )
 
     style.configure(
         "Horizontal.TProgressbar",
-        background=pink,
-        troughcolor="#f1edf1",
-        bordercolor="#f1edf1",
-        lightcolor=pink,
-        darkcolor=pink_dark,
+        background=accent,
+        troughcolor="#e8e8ed",
+        bordercolor="#e8e8ed",
+        lightcolor=accent,
+        darkcolor=accent_dark,
     )
     style.configure(
         "Vertical.TScrollbar",
-        background=pink_soft,
-        troughcolor="#f1edf1",
+        background=soft_accent,
+        troughcolor="#e8e8ed",
         bordercolor=border,
-        arrowcolor=pink,
+        arrowcolor=accent,
         relief="flat",
     )
 

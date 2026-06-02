@@ -15,9 +15,9 @@ from utils.ffmpeg_check import detect_ffmpeg, ffmpeg_install_instructions_url
 from utils.open_folder import open_folder
 
 
-class MainWindow(ttk.Frame):
+class MainWindow(tk.Frame):
     def __init__(self, master: tk.Tk, config: AppConfig):
-        super().__init__(master, padding=(14, 12))
+        super().__init__(master, bg="#fff7fb", padx=14, pady=12)
         self.master = master
         self.config = config
         self.events: queue.Queue[dict] = queue.Queue()
@@ -29,6 +29,9 @@ class MainWindow(ttk.Frame):
         self.total_items = 0
         self.current_item = 0
         self._compact_layout = False
+        self.gradient_canvas = tk.Canvas(self, highlightthickness=0, bd=0)
+        self.gradient_canvas.place(x=0, y=0, relwidth=1, relheight=1)
+        self._lower_gradient()
         self._build_ui()
         self.bind("<Configure>", self._on_resize)
         self.after_idle(self._refresh_responsive_layout)
@@ -48,7 +51,9 @@ class MainWindow(ttk.Frame):
         self.output_var = tk.StringVar(value=self.config.output_dir)
         output_entry = ttk.Entry(self, textvariable=self.output_var)
         output_entry.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(2, 12))
-        ttk.Button(self, text="Browse", command=self.pick_output_folder).grid(row=4, column=2, sticky="ew", padx=(8, 0), pady=(2, 12))
+        ttk.Button(self, text="Browse", command=self.pick_output_folder).grid(
+            row=4, column=2, sticky="ew", padx=(8, 0), pady=(2, 12)
+        )
 
         options = ttk.Frame(self)
         options.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(0, 12))
@@ -72,10 +77,21 @@ class MainWindow(ttk.Frame):
 
         self.controls_frame = ttk.Frame(self)
         self.controls_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(0, 10))
-        self.download_btn = ttk.Button(self.controls_frame, text="Download Playlist", command=self.start_download)
+        self.download_btn = ttk.Button(
+            self.controls_frame,
+            text="Download Playlist",
+            command=self.start_download,
+            style="Primary.TButton",
+        )
         self.pause_btn = ttk.Button(self.controls_frame, text="Pause", command=self.pause_download, state="disabled")
         self.resume_btn = ttk.Button(self.controls_frame, text="Resume", command=self.resume_download, state="disabled")
-        self.cancel_btn = ttk.Button(self.controls_frame, text="Cancel", command=self.cancel_download, state="disabled")
+        self.cancel_btn = ttk.Button(
+            self.controls_frame,
+            text="Cancel",
+            command=self.cancel_download,
+            state="disabled",
+            style="Danger.TButton",
+        )
         self.control_buttons = [self.download_btn, self.pause_btn, self.resume_btn, self.cancel_btn]
 
         self.progress = ttk.Progressbar(self, mode="determinate")
@@ -92,9 +108,9 @@ class MainWindow(ttk.Frame):
             state="disabled",
             wrap="word",
             bg="#ffffff",
-            fg="#171017",
-            insertbackground="#ff1493",
-            selectbackground="#ff1493",
+            fg="#1d1d1f",
+            insertbackground="#ff2d55",
+            selectbackground="#ff2d55",
             selectforeground="#ffffff",
             relief="flat",
             bd=0,
@@ -144,7 +160,34 @@ class MainWindow(ttk.Frame):
     def _on_resize(self, event: tk.Event) -> None:
         if event.widget is not self:
             return
+        self._draw_gradient(event.width, event.height)
         self._refresh_responsive_layout(event.width)
+
+    def _draw_gradient(self, width: int, height: int) -> None:
+        self.gradient_canvas.delete("gradient")
+        if width <= 1 or height <= 1:
+            return
+
+        top = (255, 241, 248)
+        middle = (255, 250, 253)
+        bottom = (245, 245, 247)
+        steps = max(height, 1)
+        for y in range(steps):
+            if y < steps * 0.58:
+                amount = y / max(steps * 0.58, 1)
+                start, end = top, middle
+            else:
+                amount = (y - steps * 0.58) / max(steps * 0.42, 1)
+                start, end = middle, bottom
+            red = int(start[0] + (end[0] - start[0]) * amount)
+            green = int(start[1] + (end[1] - start[1]) * amount)
+            blue = int(start[2] + (end[2] - start[2]) * amount)
+            color = f"#{red:02x}{green:02x}{blue:02x}"
+            self.gradient_canvas.create_line(0, y, width, y, fill=color, tags=("gradient",))
+        self._lower_gradient()
+
+    def _lower_gradient(self) -> None:
+        self.tk.call("lower", self.gradient_canvas._w)
 
     def _refresh_responsive_layout(self, width: int | None = None) -> None:
         current_width = width or self.winfo_width()
