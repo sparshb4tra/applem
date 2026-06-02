@@ -3,10 +3,13 @@ from __future__ import annotations
 import importlib.util
 import sys
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox, ttk
 
 from core.config import load_config, save_config
 from ui.main_window import MainWindow
+
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
 
 def _check_python_version() -> None:
@@ -35,20 +38,21 @@ def _configure_style(root: tk.Tk) -> None:
     danger = "#ff3b30"
     danger_dark = "#d70015"
     black = "#1d1d1f"
-    font = ("Helvetica", 11, "bold")
+    body_font = ("Helvetica", 11)
+    button_font = ("Helvetica", 11, "bold")
     title_font = ("Helvetica", 19, "bold")
 
     style = ttk.Style(root)
     style.theme_use("clam")
 
     root.configure(bg=bg)
-    root.option_add("*Font", font)
+    root.option_add("*Font", body_font)
 
-    style.configure(".", font=font, background=bg, foreground=text)
+    style.configure(".", font=body_font, background=bg, foreground=text)
     style.configure("TFrame", background=bg)
-    style.configure("TLabel", background=bg, foreground=text, font=font)
+    style.configure("TLabel", background=bg, foreground=text, font=body_font)
     style.configure("Title.TLabel", background=bg, foreground=text, font=title_font)
-    style.configure("Muted.TLabel", background=bg, foreground=muted, font=font)
+    style.configure("Muted.TLabel", background=bg, foreground=muted, font=body_font)
 
     style.configure(
         "TButton",
@@ -59,7 +63,7 @@ def _configure_style(root: tk.Tk) -> None:
         lightcolor=control,
         darkcolor=border,
         relief="flat",
-        font=font,
+        font=button_font,
     )
     style.map(
         "TButton",
@@ -107,7 +111,7 @@ def _configure_style(root: tk.Tk) -> None:
         bordercolor=border,
         insertcolor=accent,
         relief="flat",
-        font=font,
+        font=body_font,
     )
     style.map("TEntry", bordercolor=[("focus", accent), ("!focus", border)])
 
@@ -120,7 +124,7 @@ def _configure_style(root: tk.Tk) -> None:
         bordercolor=border,
         arrowcolor=muted,
         relief="flat",
-        font=font,
+        font=body_font,
     )
     style.map(
         "TCombobox",
@@ -136,7 +140,7 @@ def _configure_style(root: tk.Tk) -> None:
         foreground=text,
         indicatorbackground=panel,
         indicatorforeground=accent,
-        font=font,
+        font=body_font,
     )
     style.map(
         "TCheckbutton",
@@ -161,6 +165,18 @@ def _configure_style(root: tk.Tk) -> None:
         arrowcolor=accent,
         relief="flat",
     )
+
+
+def _set_window_icon(root: tk.Tk) -> None:
+    icon_path = ASSETS_DIR / "icon.png"
+    if not icon_path.exists():
+        return
+    try:
+        icon = tk.PhotoImage(file=str(icon_path))
+    except tk.TclError:
+        return
+    root.iconphoto(True, icon)
+    root._applem_icon = icon  # keep a Tcl image reference alive
 
 
 def _show_startup_error(message: str) -> None:
@@ -192,6 +208,7 @@ def main() -> None:
     root.geometry("820x640")
     root.minsize(520, 520)
     _configure_style(root)
+    _set_window_icon(root)
 
     _launch_main(root)
 

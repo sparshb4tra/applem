@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import queue
 import threading
 import tkinter as tk
@@ -13,6 +14,8 @@ from core.downloader import verify_playlist_downloads
 from ui.settings import DownloadSettings
 from utils.ffmpeg_check import detect_ffmpeg, ffmpeg_install_instructions_url
 from utils.open_folder import open_folder
+
+ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 
 
 class MainWindow(tk.Frame):
@@ -29,18 +32,30 @@ class MainWindow(tk.Frame):
         self.total_items = 0
         self.current_item = 0
         self._compact_layout = False
+        self._gradient_phase = 0.0
+        self.logo_image: tk.PhotoImage | None = None
         self.gradient_canvas = tk.Canvas(self, highlightthickness=0, bd=0)
         self.gradient_canvas.place(x=0, y=0, relwidth=1, relheight=1)
         self._lower_gradient()
         self._build_ui()
         self.bind("<Configure>", self._on_resize)
         self.after_idle(self._refresh_responsive_layout)
+        self.after_idle(self._animate_gradient)
         self.after(100, self.poll_queue)
 
     def _build_ui(self) -> None:
-        ttk.Label(self, text="Apple Music Downloader", style="Title.TLabel").grid(
-            row=0, column=0, columnspan=3, sticky="w", pady=(0, 12)
-        )
+        header = ttk.Frame(self)
+        header.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 12))
+        logo_path = ASSETS_DIR / "logo_header.png"
+        if logo_path.exists():
+            try:
+                self.logo_image = tk.PhotoImage(file=str(logo_path))
+            except tk.TclError:
+                self.logo_image = None
+        if self.logo_image:
+            ttk.Label(header, image=self.logo_image).grid(row=0, column=0, sticky="w", padx=(0, 10))
+        ttk.Label(header, text="Apple Music Downloader", style="Title.TLabel").grid(row=0, column=1, sticky="w")
+        header.columnconfigure(1, weight=1)
 
         ttk.Label(self, text="Playlist link:").grid(row=1, column=0, sticky="w")
         self.url_var = tk.StringVar()
@@ -116,7 +131,7 @@ class MainWindow(tk.Frame):
             bd=0,
             padx=10,
             pady=10,
-            font=("Helvetica", 11, "bold"),
+            font=("Helvetica", 11),
         )
         self.log_text.grid(row=0, column=0, sticky="nsew")
         log_scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
@@ -168,16 +183,18 @@ class MainWindow(tk.Frame):
         if width <= 1 or height <= 1:
             return
 
-        top = (255, 241, 248)
+        glow = math.sin(self._gradient_phase)
+        top = (255, 242 + int(glow * 2), 249 + int(glow * 2))
         middle = (255, 250, 253)
         bottom = (245, 245, 247)
+        split = 0.58 + (glow * 0.035)
         steps = max(height, 1)
         for y in range(steps):
-            if y < steps * 0.58:
-                amount = y / max(steps * 0.58, 1)
+            if y < steps * split:
+                amount = y / max(steps * split, 1)
                 start, end = top, middle
             else:
-                amount = (y - steps * 0.58) / max(steps * 0.42, 1)
+                amount = (y - steps * split) / max(steps * (1 - split), 1)
                 start, end = middle, bottom
             red = int(start[0] + (end[0] - start[0]) * amount)
             green = int(start[1] + (end[1] - start[1]) * amount)
@@ -185,6 +202,13 @@ class MainWindow(tk.Frame):
             color = f"#{red:02x}{green:02x}{blue:02x}"
             self.gradient_canvas.create_line(0, y, width, y, fill=color, tags=("gradient",))
         self._lower_gradient()
+
+    def _animate_gradient(self) -> None:
+        if not self.winfo_exists():
+            return
+        self._gradient_phase = (self._gradient_phase + 0.045) % (math.pi * 2)
+        self._draw_gradient(self.winfo_width(), self.winfo_height())
+        self.after(160, self._animate_gradient)
 
     def _lower_gradient(self) -> None:
         self.tk.call("lower", self.gradient_canvas._w)
