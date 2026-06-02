@@ -56,8 +56,8 @@ def main() -> None:
 
     root = tk.Tk()
     root.title("Apple Music Downloader")
-    root.geometry("760x620")
-    root.minsize(700, 560)
+    root.geometry("820x640")
+    root.minsize(520, 520)
     _configure_style(root)
 
     _launch_main(root)

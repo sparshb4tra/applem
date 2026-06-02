@@ -17,7 +17,7 @@ from utils.open_folder import open_folder
 
 class MainWindow(ttk.Frame):
     def __init__(self, master: tk.Tk, config: AppConfig):
-        super().__init__(master, padding=16)
+        super().__init__(master, padding=(14, 12))
         self.master = master
         self.config = config
         self.events: queue.Queue[dict] = queue.Queue()
@@ -28,7 +28,10 @@ class MainWindow(ttk.Frame):
         self.cancel_event = threading.Event()
         self.total_items = 0
         self.current_item = 0
+        self._compact_layout = False
         self._build_ui()
+        self.bind("<Configure>", self._on_resize)
+        self.after_idle(self._refresh_responsive_layout)
         self.after(100, self.poll_queue)
 
     def _build_ui(self) -> None:
@@ -38,63 +41,102 @@ class MainWindow(ttk.Frame):
 
         ttk.Label(self, text="Playlist link:").grid(row=1, column=0, sticky="w")
         self.url_var = tk.StringVar()
-        self.url_entry = ttk.Entry(self, textvariable=self.url_var, width=64)
+        self.url_entry = ttk.Entry(self, textvariable=self.url_var)
         self.url_entry.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(2, 12))
 
         ttk.Label(self, text="Save to:").grid(row=3, column=0, sticky="w")
         self.output_var = tk.StringVar(value=self.config.output_dir)
-        output_entry = ttk.Entry(self, textvariable=self.output_var, width=50)
+        output_entry = ttk.Entry(self, textvariable=self.output_var)
         output_entry.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(2, 12))
-        ttk.Button(self, text="...", width=4, command=self.pick_output_folder).grid(row=4, column=2, sticky="e")
+        ttk.Button(self, text="Browse", command=self.pick_output_folder).grid(row=4, column=2, sticky="ew", padx=(8, 0), pady=(2, 12))
 
-        ttk.Label(self, text="Audio format:").grid(row=5, column=0, sticky="w")
+        options = ttk.Frame(self)
+        options.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(0, 12))
+        ttk.Label(options, text="Audio format:").grid(row=0, column=0, sticky="w")
         self.format_var = tk.StringVar(value=self.config.output_format or "mp3")
         ttk.Combobox(
-            self,
+            options,
             textvariable=self.format_var,
             state="readonly",
             values=("mp3", "wav"),
             width=12,
-        ).grid(row=5, column=1, sticky="w", pady=(0, 12))
+        ).grid(row=0, column=1, sticky="w", padx=(8, 18))
 
         self.skip_existing_var = tk.BooleanVar(value=self.config.skip_existing)
         ttk.Checkbutton(
-            self,
+            options,
             text="Skip songs already downloaded",
             variable=self.skip_existing_var,
-        ).grid(row=5, column=2, sticky="e", pady=(0, 12))
+        ).grid(row=0, column=2, sticky="e")
+        options.columnconfigure(2, weight=1)
 
-        controls = ttk.Frame(self)
-        controls.grid(row=6, column=0, columnspan=3, pady=(0, 12))
-        self.download_btn = ttk.Button(self, text="Download Playlist", command=self.start_download)
-        self.download_btn.grid(row=0, column=0, padx=4)
-        self.pause_btn = ttk.Button(self, text="Pause", command=self.pause_download, state="disabled")
-        self.pause_btn.grid(row=0, column=1, padx=4)
-        self.resume_btn = ttk.Button(self, text="Resume", command=self.resume_download, state="disabled")
-        self.resume_btn.grid(row=0, column=2, padx=4)
-        self.cancel_btn = ttk.Button(self, text="Cancel", command=self.cancel_download, state="disabled")
-        self.cancel_btn.grid(row=0, column=3, padx=4)
+        self.controls_frame = ttk.Frame(self)
+        self.controls_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(0, 10))
+        self.download_btn = ttk.Button(self.controls_frame, text="Download Playlist", command=self.start_download)
+        self.pause_btn = ttk.Button(self.controls_frame, text="Pause", command=self.pause_download, state="disabled")
+        self.resume_btn = ttk.Button(self.controls_frame, text="Resume", command=self.resume_download, state="disabled")
+        self.cancel_btn = ttk.Button(self.controls_frame, text="Cancel", command=self.cancel_download, state="disabled")
+        self.control_buttons = [self.download_btn, self.pause_btn, self.resume_btn, self.cancel_btn]
 
-        self.progress = ttk.Progressbar(self, mode="determinate", length=500)
+        self.progress = ttk.Progressbar(self, mode="determinate")
         self.progress.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(4, 4))
         self.progress_label = ttk.Label(self, text="Ready")
-        self.progress_label.grid(row=8, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        self.progress_label.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(0, 8))
 
-        self.log_text = tk.Text(self, width=80, height=12, state="disabled", wrap="word")
-        self.log_text.grid(row=9, column=0, columnspan=3, sticky="nsew")
+        log_frame = ttk.Frame(self)
+        log_frame.grid(row=9, column=0, columnspan=3, sticky="nsew")
+        self.log_text = tk.Text(log_frame, width=1, height=10, state="disabled", wrap="word")
+        self.log_text.grid(row=0, column=0, sticky="nsew")
+        log_scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
+        log_scroll.grid(row=0, column=1, sticky="ns")
+        self.log_text.configure(yscrollcommand=log_scroll.set)
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
 
-        utilities = ttk.Frame(self)
-        utilities.grid(row=10, column=0, columnspan=3, pady=(10, 0))
-        self.verify_btn = ttk.Button(utilities, text="Verify Downloads", command=self.start_verify)
-        self.verify_btn.grid(row=0, column=0, padx=4)
-        self.retry_btn = ttk.Button(utilities, text="Retry Missing", command=self.retry_missing)
-        self.retry_btn.grid(row=0, column=1, padx=4)
-        ttk.Button(utilities, text="Open Downloads Folder", command=self._open_output_folder).grid(row=0, column=2, padx=4)
-        ttk.Button(utilities, text="Clear Log", command=self.clear_log).grid(row=0, column=3, padx=4)
+        self.utilities_frame = ttk.Frame(self)
+        self.utilities_frame.grid(row=10, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        self.verify_btn = ttk.Button(self.utilities_frame, text="Verify Downloads", command=self.start_verify)
+        self.retry_btn = ttk.Button(self.utilities_frame, text="Retry Missing", command=self.retry_missing)
+        self.open_folder_btn = ttk.Button(self.utilities_frame, text="Open Downloads Folder", command=self._open_output_folder)
+        self.clear_log_btn = ttk.Button(self.utilities_frame, text="Clear Log", command=self.clear_log)
+        self.utility_buttons = [self.verify_btn, self.retry_btn, self.open_folder_btn, self.clear_log_btn]
 
         self.columnconfigure(0, weight=1)
         self.columnconfigure(1, weight=1)
+        self.columnconfigure(2, weight=0, minsize=96)
         self.rowconfigure(9, weight=1)
+        self._layout_button_groups(compact=False)
+
+    def _layout_button_groups(self, compact: bool) -> None:
+        self._layout_buttons(self.controls_frame, self.control_buttons, compact)
+        self._layout_buttons(self.utilities_frame, self.utility_buttons, compact)
+
+    def _layout_buttons(self, parent: ttk.Frame, buttons: list[ttk.Button], compact: bool) -> None:
+        for button in buttons:
+            button.grid_forget()
+        for index in range(4):
+            parent.columnconfigure(index, weight=0)
+
+        columns = 2 if compact else len(buttons)
+        for index, button in enumerate(buttons):
+            row = index // columns
+            column = index % columns
+            button.grid(row=row, column=column, sticky="ew", padx=4, pady=3)
+        for index in range(columns):
+            parent.columnconfigure(index, weight=1, uniform=str(parent))
+
+    def _on_resize(self, event: tk.Event) -> None:
+        if event.widget is not self:
+            return
+        self._refresh_responsive_layout(event.width)
+
+    def _refresh_responsive_layout(self, width: int | None = None) -> None:
+        current_width = width or self.winfo_width()
+        compact = current_width < 640
+        if compact != self._compact_layout:
+            self._compact_layout = compact
+            self._layout_button_groups(compact=compact)
+        self.progress_label.configure(wraplength=max(260, current_width - 36))
 
     def pick_output_folder(self) -> None:
         selected = filedialog.askdirectory(title="Choose download folder")
