@@ -98,8 +98,20 @@ class MainWindow(tk.Frame):
             command=self.start_download,
             style="Primary.TButton",
         )
-        self.pause_btn = ttk.Button(self.controls_frame, text="Pause", command=self.pause_download, state="disabled")
-        self.resume_btn = ttk.Button(self.controls_frame, text="Resume", command=self.resume_download, state="disabled")
+        self.pause_btn = ttk.Button(
+            self.controls_frame,
+            text="Pause",
+            command=self.pause_download,
+            state="disabled",
+            style="Pause.TButton",
+        )
+        self.resume_btn = ttk.Button(
+            self.controls_frame,
+            text="Resume",
+            command=self.resume_download,
+            state="disabled",
+            style="Resume.TButton",
+        )
         self.cancel_btn = ttk.Button(
             self.controls_frame,
             text="Cancel",
@@ -142,8 +154,18 @@ class MainWindow(tk.Frame):
 
         self.utilities_frame = ttk.Frame(self)
         self.utilities_frame.grid(row=10, column=0, columnspan=3, sticky="ew", pady=(10, 0))
-        self.verify_btn = ttk.Button(self.utilities_frame, text="Verify Downloads", command=self.start_verify)
-        self.retry_btn = ttk.Button(self.utilities_frame, text="Retry Missing", command=self.retry_missing)
+        self.verify_btn = ttk.Button(
+            self.utilities_frame,
+            text="Verify Downloads",
+            command=self.start_verify,
+            style="Verify.TButton",
+        )
+        self.retry_btn = ttk.Button(
+            self.utilities_frame,
+            text="Retry Missing",
+            command=self.retry_missing,
+            style="Retry.TButton",
+        )
         self.open_folder_btn = ttk.Button(self.utilities_frame, text="Open Downloads Folder", command=self._open_output_folder)
         self.clear_log_btn = ttk.Button(self.utilities_frame, text="Clear Log", command=self.clear_log)
         self.utility_buttons = [self.verify_btn, self.retry_btn, self.open_folder_btn, self.clear_log_btn]

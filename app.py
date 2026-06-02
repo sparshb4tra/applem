@@ -35,6 +35,12 @@ def _configure_style(root: tk.Tk) -> None:
     control_hover = "#f2f2f4"
     control_pressed = "#e8e8ed"
     disabled = "#eeeeef"
+    blue = "#007aff"
+    blue_dark = "#005ecb"
+    green = "#34c759"
+    green_dark = "#248a3d"
+    orange = "#ff9f0a"
+    orange_dark = "#c46e00"
     danger = "#ff3b30"
     danger_dark = "#d70015"
     black = "#1d1d1f"
@@ -86,6 +92,27 @@ def _configure_style(root: tk.Tk) -> None:
         foreground=[("disabled", muted), ("pressed", "#ffffff"), ("active", "#ffffff")],
         bordercolor=[("disabled", disabled), ("pressed", "#000000"), ("active", "#2c2c2e")],
     )
+
+    def configure_tinted_button(style_name: str, color: str, active_color: str, active_bg: str) -> None:
+        style.configure(
+            style_name,
+            background=control,
+            foreground=color,
+            bordercolor=border,
+            lightcolor=control,
+            darkcolor=border,
+        )
+        style.map(
+            style_name,
+            background=[("disabled", disabled), ("pressed", active_bg), ("active", active_bg)],
+            foreground=[("disabled", muted), ("pressed", active_color), ("active", active_color)],
+            bordercolor=[("disabled", disabled), ("pressed", color), ("active", color)],
+        )
+
+    configure_tinted_button("Pause.TButton", orange, orange_dark, "#fff7e8")
+    configure_tinted_button("Resume.TButton", green, green_dark, "#f0fbf3")
+    configure_tinted_button("Verify.TButton", blue, blue_dark, "#eef6ff")
+    configure_tinted_button("Retry.TButton", accent, accent_dark, "#fff0f4")
 
     style.configure(
         "Danger.TButton",
