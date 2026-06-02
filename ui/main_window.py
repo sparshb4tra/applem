@@ -35,7 +35,7 @@ class MainWindow(ttk.Frame):
         self.after(100, self.poll_queue)
 
     def _build_ui(self) -> None:
-        ttk.Label(self, text="Apple Music Downloader", font=("TkDefaultFont", 16, "bold")).grid(
+        ttk.Label(self, text="Apple Music Downloader", style="Title.TLabel").grid(
             row=0, column=0, columnspan=3, sticky="w", pady=(0, 12)
         )
 
@@ -85,7 +85,23 @@ class MainWindow(ttk.Frame):
 
         log_frame = ttk.Frame(self)
         log_frame.grid(row=9, column=0, columnspan=3, sticky="nsew")
-        self.log_text = tk.Text(log_frame, width=1, height=10, state="disabled", wrap="word")
+        self.log_text = tk.Text(
+            log_frame,
+            width=1,
+            height=10,
+            state="disabled",
+            wrap="word",
+            bg="#ffffff",
+            fg="#171017",
+            insertbackground="#ff1493",
+            selectbackground="#ff1493",
+            selectforeground="#ffffff",
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=10,
+            font=("Helvetica", 11, "bold"),
+        )
         self.log_text.grid(row=0, column=0, sticky="nsew")
         log_scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
         log_scroll.grid(row=0, column=1, sticky="ns")
