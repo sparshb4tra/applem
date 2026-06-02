@@ -1,4 +1,4 @@
-# Playlist Downloader (Minimal Steps)
+# Apple Music Playlist Downloader 
 
 Desktop app that takes a public Apple Music playlist link, searches matching audio on YouTube, and downloads files to your computer.
 
