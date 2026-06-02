@@ -1,40 +1,62 @@
-# Apple Music Playlist Downloader 
+# applem
 
-Desktop app that takes a public Apple Music playlist link, searches matching audio on YouTube, and downloads files to your computer.
+public apple music playlist downloader.
 
-No cookie export. No account login inside the app.
+paste a playlist link, pick a folder, choose `mp3` or `wav`, and the app downloads matched audio from youtube.
 
----
+no apple login. no cookies. no browser extension. just the playlist url.
 
-## One-time setup
+## what it does
 
-### Mac
-1. Download this folder to your computer
-2. Double-click `setup/install_mac.sh`
-3. Wait for it to finish
+- reads songs from a public apple music playlist
+- searches youtube for each track with `yt-dlp`
+- saves numbered audio files like `001 - song - artist.mp3`
+- skips files you already downloaded
+- lets you pause, resume, cancel, verify, and retry missing tracks
+- writes failed tracks to `failed_downloads.txt`
+- writes verification results to `verification_report.txt`
 
-### Windows
-1. Download this folder to your computer
-2. Double-click `setup/install_windows.bat`
-3. Wait for it to finish
+## setup
 
----
+windows:
 
-## How to use
+1. run `setup/install_windows.bat`
+2. open `Apple Music Downloader.bat`
 
-1. Run the app
-   - **Mac:** `Apple Music Downloader.command`
-   - **Windows:** `Apple Music Downloader.bat`
-2. Paste a public Apple Music playlist URL
-3. Choose output folder and format (`mp3` or `wav`)
-4. Click **Download Playlist**
-5. Folder opens automatically when complete
+macos:
 
----
+1. run `setup/install_mac.sh`
+2. open `Apple Music Downloader.command`
 
-## Notes
+## how to use
 
-- This flow uses YouTube search/download for each track match.
-- `ffmpeg` is required for audio conversion.
-- If some songs fail, check `failed_downloads.txt` in the output folder.
-- The launcher installs the Python downloader package automatically if it is missing.
+1. paste a public apple music playlist link
+2. choose where the songs should save
+3. choose `mp3` or `wav`
+4. click `download playlist`
+
+the folder opens when the run finishes.
+
+## controls
+
+- `pause`: pause a long run
+- `resume`: continue after pausing
+- `cancel`: stop the current run safely
+- `skip songs already downloaded`: keep completed files and only fill gaps
+- `verify downloads`: check if every expected song exists
+- `retry missing`: try missing or incomplete tracks again
+- `clear log`: wipe the visible log only
+
+## heads up
+
+- this does not download from apple music directly
+- apple music is used for the public playlist track list
+- youtube is used for matched audio downloads
+- `ffmpeg` is needed for conversion
+- matching depends on youtube search, so weird covers/live versions can happen sometimes
+
+## open source
+
+this is open source. fork it, break it, fix it, ship it.
+
+if applem helped you, star the repo. costs nothing, helps a lot.

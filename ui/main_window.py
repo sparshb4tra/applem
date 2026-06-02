@@ -8,7 +8,8 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from core.config import AppConfig, save_config
-from core.downloader import PlaylistDownloaderError, run_download_sync
+from core.downloader import DownloadCancelled, DownloadControls, PlaylistDownloaderError, run_download_sync
+from core.downloader import verify_playlist_downloads
 from ui.settings import DownloadSettings
 from utils.ffmpeg_check import detect_ffmpeg, ffmpeg_install_instructions_url
 from utils.open_folder import open_folder
@@ -22,6 +23,9 @@ class MainWindow(ttk.Frame):
         self.events: queue.Queue[dict] = queue.Queue()
         self.download_thread: threading.Thread | None = None
         self.download_in_progress = False
+        self.utility_in_progress = False
+        self.pause_event = threading.Event()
+        self.cancel_event = threading.Event()
         self.total_items = 0
         self.current_item = 0
         self._build_ui()
@@ -53,8 +57,23 @@ class MainWindow(ttk.Frame):
             width=12,
         ).grid(row=5, column=1, sticky="w", pady=(0, 12))
 
+        self.skip_existing_var = tk.BooleanVar(value=self.config.skip_existing)
+        ttk.Checkbutton(
+            self,
+            text="Skip songs already downloaded",
+            variable=self.skip_existing_var,
+        ).grid(row=5, column=2, sticky="e", pady=(0, 12))
+
+        controls = ttk.Frame(self)
+        controls.grid(row=6, column=0, columnspan=3, pady=(0, 12))
         self.download_btn = ttk.Button(self, text="Download Playlist", command=self.start_download)
-        self.download_btn.grid(row=6, column=0, columnspan=3, pady=(0, 12))
+        self.download_btn.grid(row=0, column=0, padx=4)
+        self.pause_btn = ttk.Button(self, text="Pause", command=self.pause_download, state="disabled")
+        self.pause_btn.grid(row=0, column=1, padx=4)
+        self.resume_btn = ttk.Button(self, text="Resume", command=self.resume_download, state="disabled")
+        self.resume_btn.grid(row=0, column=2, padx=4)
+        self.cancel_btn = ttk.Button(self, text="Cancel", command=self.cancel_download, state="disabled")
+        self.cancel_btn.grid(row=0, column=3, padx=4)
 
         self.progress = ttk.Progressbar(self, mode="determinate", length=500)
         self.progress.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(4, 4))
@@ -64,9 +83,14 @@ class MainWindow(ttk.Frame):
         self.log_text = tk.Text(self, width=80, height=12, state="disabled", wrap="word")
         self.log_text.grid(row=9, column=0, columnspan=3, sticky="nsew")
 
-        ttk.Button(self, text="Open Downloads Folder", command=self._open_output_folder).grid(
-            row=10, column=0, columnspan=3, pady=(10, 0)
-        )
+        utilities = ttk.Frame(self)
+        utilities.grid(row=10, column=0, columnspan=3, pady=(10, 0))
+        self.verify_btn = ttk.Button(utilities, text="Verify Downloads", command=self.start_verify)
+        self.verify_btn.grid(row=0, column=0, padx=4)
+        self.retry_btn = ttk.Button(utilities, text="Retry Missing", command=self.retry_missing)
+        self.retry_btn.grid(row=0, column=1, padx=4)
+        ttk.Button(utilities, text="Open Downloads Folder", command=self._open_output_folder).grid(row=0, column=2, padx=4)
+        ttk.Button(utilities, text="Clear Log", command=self.clear_log).grid(row=0, column=3, padx=4)
 
         self.columnconfigure(0, weight=1)
         self.columnconfigure(1, weight=1)
@@ -86,15 +110,50 @@ class MainWindow(ttk.Frame):
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
-    def _settings(self) -> DownloadSettings:
-        return DownloadSettings(output_dir=Path(self.output_var.get()), output_format=self.format_var.get())
+    def clear_log(self) -> None:
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.configure(state="disabled")
 
-    def start_download(self) -> None:
-        if self.download_in_progress:
+    def _settings(self) -> DownloadSettings:
+        return DownloadSettings(
+            output_dir=Path(self.output_var.get()),
+            output_format=self.format_var.get(),
+            skip_existing=self.skip_existing_var.get(),
+        )
+
+    def _set_idle_controls(self) -> None:
+        self.download_btn.configure(state="normal")
+        self.verify_btn.configure(state="normal")
+        self.retry_btn.configure(state="normal")
+        self.pause_btn.configure(state="disabled")
+        self.resume_btn.configure(state="disabled")
+        self.cancel_btn.configure(state="disabled")
+
+    def _set_download_controls(self) -> None:
+        self.download_btn.configure(state="disabled")
+        self.verify_btn.configure(state="disabled")
+        self.retry_btn.configure(state="disabled")
+        self.pause_btn.configure(state="normal")
+        self.resume_btn.configure(state="disabled")
+        self.cancel_btn.configure(state="normal")
+
+    def _set_utility_controls(self) -> None:
+        self.download_btn.configure(state="disabled")
+        self.verify_btn.configure(state="disabled")
+        self.retry_btn.configure(state="disabled")
+        self.pause_btn.configure(state="disabled")
+        self.resume_btn.configure(state="disabled")
+        self.cancel_btn.configure(state="disabled")
+
+    def start_download(self, force_skip_existing: bool = False) -> None:
+        if self.download_in_progress or self.utility_in_progress:
             return
 
         url = self.url_var.get().strip()
         settings = self._settings()
+        if force_skip_existing:
+            settings.skip_existing = True
 
         if not url:
             messagebox.showerror("Missing link", "Paste an Apple Music playlist link first.")
@@ -111,13 +170,17 @@ class MainWindow(ttk.Frame):
 
         self.config.output_dir = str(settings.output_dir)
         self.config.output_format = settings.output_format
+        self.config.skip_existing = settings.skip_existing
         save_config(self.config)
 
         self.download_in_progress = True
-        self.download_btn.configure(state="disabled")
+        self.pause_event.clear()
+        self.cancel_event.clear()
+        self._set_download_controls()
         self.current_item = 0
         self.total_items = 0
-        self.progress.configure(value=0, maximum=100)
+        self.progress.stop()
+        self.progress.configure(mode="determinate", value=0, maximum=100)
         self.progress_label.configure(text="Starting...")
 
         self.download_thread = threading.Thread(
@@ -126,6 +189,38 @@ class MainWindow(ttk.Frame):
             daemon=True,
         )
         self.download_thread.start()
+
+    def retry_missing(self) -> None:
+        self._append_log("Retrying missing songs. Existing files will be skipped.")
+        self.start_download(force_skip_existing=True)
+
+    def pause_download(self) -> None:
+        if not self.download_in_progress:
+            return
+        self.pause_event.set()
+        self.pause_btn.configure(state="disabled")
+        self.resume_btn.configure(state="normal")
+        self.progress_label.configure(text="Paused")
+        self._append_log("Paused. The current song may finish its current step first.")
+
+    def resume_download(self) -> None:
+        if not self.download_in_progress:
+            return
+        self.pause_event.clear()
+        self.pause_btn.configure(state="normal")
+        self.resume_btn.configure(state="disabled")
+        self._append_log("Resumed.")
+
+    def cancel_download(self) -> None:
+        if not self.download_in_progress:
+            return
+        self.cancel_event.set()
+        self.pause_event.clear()
+        self.cancel_btn.configure(state="disabled")
+        self.pause_btn.configure(state="disabled")
+        self.resume_btn.configure(state="disabled")
+        self.progress_label.configure(text="Cancelling...")
+        self._append_log("Cancelling. The current song may need a moment to stop.")
 
     def _worker(self, url: str, settings: DownloadSettings) -> None:
         def progress_callback(current: int, total: int, track_name: str) -> None:
@@ -151,8 +246,12 @@ class MainWindow(ttk.Frame):
                 error_callback=error_callback,
                 output_format=settings.output_format,
                 ffmpeg_path=ffmpeg_path or "ffmpeg",
+                skip_existing=settings.skip_existing,
+                controls=DownloadControls(pause_event=self.pause_event, cancel_event=self.cancel_event),
             )
             self.events.put({"type": "done", "failures": len(failures), "output_dir": str(settings.output_dir)})
+        except DownloadCancelled as exc:
+            self.events.put({"type": "cancelled", "message": str(exc), "output_dir": str(settings.output_dir)})
         except PlaylistDownloaderError as exc:
             self.events.put({"type": "fatal", "message": str(exc)})
         except Exception as exc:
@@ -162,6 +261,47 @@ class MainWindow(ttk.Frame):
             else:
                 text = "Something went wrong. Please try again."
             self.events.put({"type": "fatal", "message": text})
+
+    def start_verify(self) -> None:
+        if self.download_in_progress or self.utility_in_progress:
+            return
+        url = self.url_var.get().strip()
+        settings = self._settings()
+        if not url:
+            messagebox.showerror("Missing link", "Paste an Apple Music playlist link first.")
+            return
+
+        self.config.output_dir = str(settings.output_dir)
+        self.config.output_format = settings.output_format
+        self.config.skip_existing = settings.skip_existing
+        save_config(self.config)
+
+        self.utility_in_progress = True
+        self._set_utility_controls()
+        self.progress.configure(mode="indeterminate")
+        self.progress.start(12)
+        self.progress_label.configure(text="Verifying downloads...")
+        self._append_log("Verifying downloaded files...")
+        thread = threading.Thread(target=self._verify_worker, args=(url, settings), daemon=True)
+        thread.start()
+
+    def _verify_worker(self, url: str, settings: DownloadSettings) -> None:
+        try:
+            result = verify_playlist_downloads(url, settings.output_dir, settings.output_format)
+            self.events.put(
+                {
+                    "type": "verify_done",
+                    "total": result.total,
+                    "present": result.present,
+                    "missing": len(result.missing),
+                    "incomplete": len(result.incomplete),
+                    "report_path": str(result.report_path),
+                }
+            )
+        except PlaylistDownloaderError as exc:
+            self.events.put({"type": "verify_error", "message": str(exc)})
+        except Exception:
+            self.events.put({"type": "verify_error", "message": "Could not verify downloads. Please try again."})
 
     def poll_queue(self) -> None:
         try:
@@ -184,8 +324,13 @@ class MainWindow(ttk.Frame):
                     self._append_log(f"ERROR  {event['message']}")
                     messagebox.showerror("Download error", event["message"])
                     self.download_in_progress = False
-                    self.download_btn.configure(state="normal")
+                    self._set_idle_controls()
                     self.progress_label.configure(text="Stopped")
+                elif event_type == "cancelled":
+                    self._append_log("Stopped by user.")
+                    self.download_in_progress = False
+                    self._set_idle_controls()
+                    self.progress_label.configure(text="Cancelled")
                 elif event_type == "done":
                     fail_count = int(event["failures"])
                     if fail_count:
@@ -196,9 +341,40 @@ class MainWindow(ttk.Frame):
                     else:
                         messagebox.showinfo("Done", "Download complete.")
                     self.download_in_progress = False
-                    self.download_btn.configure(state="normal")
+                    self._set_idle_controls()
                     self.progress_label.configure(text="Completed")
                     open_folder(Path(event["output_dir"]))
+                elif event_type == "verify_done":
+                    self.progress.stop()
+                    self.progress.configure(mode="determinate", value=0, maximum=100)
+                    self.utility_in_progress = False
+                    self._set_idle_controls()
+                    total = int(event["total"])
+                    present = int(event["present"])
+                    missing = int(event["missing"])
+                    incomplete = int(event["incomplete"])
+                    self.progress_label.configure(text=f"Verified: {present} of {total} ready")
+                    self._append_log(
+                        f"VERIFY  {present}/{total} ready, {missing} missing, {incomplete} incomplete."
+                    )
+                    self._append_log(f"Report: {event['report_path']}")
+                    if missing or incomplete:
+                        messagebox.showwarning(
+                            "Verification finished",
+                            f"{present} of {total} songs are ready.\n"
+                            f"{missing} missing, {incomplete} incomplete.\n"
+                            "Click Retry Missing to fill the gaps.",
+                        )
+                    else:
+                        messagebox.showinfo("Verification finished", "Everything is downloaded.")
+                elif event_type == "verify_error":
+                    self.progress.stop()
+                    self.progress.configure(mode="determinate", value=0, maximum=100)
+                    self.utility_in_progress = False
+                    self._set_idle_controls()
+                    self.progress_label.configure(text="Verification stopped")
+                    self._append_log(f"ERROR  {event['message']}")
+                    messagebox.showerror("Verification error", event["message"])
         except queue.Empty:
             pass
         self.after(100, self.poll_queue)

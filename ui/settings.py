@@ -8,3 +8,4 @@ from pathlib import Path
 class DownloadSettings:
     output_dir: Path
     output_format: str
+    skip_existing: bool

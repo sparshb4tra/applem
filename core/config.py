@@ -12,6 +12,7 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
 class AppConfig:
     output_dir: str = str(Path.home() / "Music" / "AppleDownloads")
     output_format: str = "mp3"
+    skip_existing: bool = True
 
 
 def load_config(config_path: Path = CONFIG_PATH) -> AppConfig:
@@ -25,6 +26,7 @@ def load_config(config_path: Path = CONFIG_PATH) -> AppConfig:
         return AppConfig(
             output_dir=data.get("output_dir", str(Path.home() / "Music" / "AppleDownloads")),
             output_format=data.get("output_format", "mp3"),
+            skip_existing=bool(data.get("skip_existing", True)),
         )
     except Exception:
         config = AppConfig()
