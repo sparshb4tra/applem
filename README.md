@@ -28,6 +28,8 @@ macos:
 1. run `setup/install_mac.sh`
 2. open `Apple Music Downloader.command`
 
+the mac launcher creates its own `.venv`, installs `yt-dlp` there, and writes launch issues to `applem-launch.log`.
+
 ## how to use
 
 1. paste a public apple music playlist link

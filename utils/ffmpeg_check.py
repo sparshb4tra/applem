@@ -47,7 +47,10 @@ def detect_ffmpeg() -> tuple[bool, str]:
             return True, found
 
     if system == "Darwin":
-        found = _ffmpeg_dir_from([Path("/opt/homebrew/bin/ffmpeg"), Path("/usr/local/bin/ffmpeg")])
+        candidates = [Path("/opt/homebrew/bin/ffmpeg"), Path("/usr/local/bin/ffmpeg")]
+        candidates.extend(Path("/opt/homebrew/Cellar").glob("ffmpeg/*/bin/ffmpeg"))
+        candidates.extend(Path("/usr/local/Cellar").glob("ffmpeg/*/bin/ffmpeg"))
+        found = _ffmpeg_dir_from(candidates)
         if found:
             return True, found
 
