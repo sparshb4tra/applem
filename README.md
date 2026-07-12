@@ -1,5 +1,4 @@
 # applem
-
 public apple music playlist downloader.
 
 paste a playlist link, pick a folder, choose `mp3` or `wav`, and the app downloads matched audio from youtube.
