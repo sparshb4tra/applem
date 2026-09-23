@@ -61,4 +61,4 @@ the folder opens when the run finishes.
 this is open source. fork it, break it, fix it, ship it.
 
 if applem helped you, star the repo. costs nothing, helps a lot.
-<!-- last touched 2026-09-22 18:47:14 -->
+<!-- last touched 2026-09-23 13:19:54 -->
