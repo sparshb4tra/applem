@@ -9,7 +9,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from threading import Event
 from typing import Callable
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from urllib.parse import urlparse, urljoin
 
@@ -19,6 +19,43 @@ from yt_dlp.utils import DownloadError
 ProgressCallback = Callable[[int, int, str], None]
 LogCallback = Callable[[str], None]
 ErrorCallback = Callable[[str, str], None]
+
+FETCH_ATTEMPTS = 5
+FETCH_TIMEOUT_SECONDS = 25
+FETCH_RETRY_BACKOFF_SECONDS = 0.4
+
+# Apple answers 4xx for dead, private, or rate limited links. Retrying those just
+# makes the user wait for an answer that will not change, so only retry 5xx and
+# connection level failures (or the couple of 4xx codes that are worth another try).
+RETRYABLE_HTTP_STATUS = {408, 425, 429, 500, 502, 503, 504}
+
+
+def _fetch_error_message(exc: Exception) -> str:
+    """Turn a fetch failure into something a user can actually act on."""
+    if isinstance(exc, HTTPError):
+        code = exc.code
+        if code in (401, 403):
+            return (
+                f"Apple refused that playlist page ({code}). "
+                "The playlist is probably private or not available in that storefront."
+            )
+        if code == 404:
+            return (
+                "Apple could not find that playlist page (404). "
+                "Open the link in a browser to check it is public and still exists."
+            )
+        if code == 429:
+            return "Apple is rate limiting this app right now. Wait a minute and try again."
+        if 500 <= code < 600:
+            return f"Apple had a server problem ({code}). Try again in a minute."
+        return f"Apple returned an unexpected response ({code}). Check the link and try again."
+    if isinstance(exc, TimeoutError):
+        return "The playlist page took too long to load. Check your connection and try again."
+    if isinstance(exc, URLError):
+        if isinstance(exc.reason, TimeoutError):
+            return "The playlist page took too long to load. Check your connection and try again."
+        return "No internet connection. Check your Wi-Fi and try again."
+    return "Could not open playlist page. Check the link and try again."
 
 
 class PlaylistDownloaderError(Exception):
@@ -208,10 +245,8 @@ def read_playlist_tracks(url: str) -> list[tuple[str, str]]:
 
     try:
         html = _fetch_playlist_page(url)
-    except URLError as exc:
-        raise PlaylistDownloaderError("No internet connection. Check your Wi-Fi and try again.") from exc
     except Exception as exc:
-        raise PlaylistDownloaderError("Could not open playlist page. Check the link and try again.") from exc
+        raise PlaylistDownloaderError(_fetch_error_message(exc)) from exc
 
     tracks = _extract_tracks_from_apple_json_scripts(html)
     token_candidates = [] if tracks else _discover_musickit_tokens(html, page_url=url)
@@ -296,14 +331,18 @@ def _extract_script_urls(html: str, page_url: str) -> list[str]:
 
 def _fetch_text(url: str) -> str:
     last_error: Exception | None = None
-    for attempt in range(5):
+    for attempt in range(FETCH_ATTEMPTS):
         req = Request(url, headers=_browser_headers())
         try:
-            with urlopen(req, timeout=25) as response:  # noqa: S310
+            with urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as response:  # noqa: S310
                 return response.read().decode("utf-8", errors="ignore")
+        except HTTPError as exc:
+            if exc.code not in RETRYABLE_HTTP_STATUS:
+                raise
+            last_error = exc
         except Exception as exc:
             last_error = exc
-            time.sleep(0.4 * (attempt + 1))
+        time.sleep(FETCH_RETRY_BACKOFF_SECONDS * (attempt + 1))
     if last_error:
         raise last_error
     return ""
