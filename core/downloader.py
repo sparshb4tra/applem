@@ -24,6 +24,19 @@ FETCH_ATTEMPTS = 5
 FETCH_TIMEOUT_SECONDS = 25
 FETCH_RETRY_BACKOFF_SECONDS = 0.4
 
+# Hunting for a MusicKit token across linked JS bundles is only a fallback: the
+# playlist page usually carries the track list already. Retrying up to 20
+# bundles with the page-level budget meant a slow or blocked CDN could hold the
+# run for many minutes before it gave up, so those fetches stay short and
+# single shot.
+BEST_EFFORT_FETCH_ATTEMPTS = 1
+BEST_EFFORT_FETCH_TIMEOUT_SECONDS = 10
+MAX_SCRIPT_BUNDLES = 20
+
+# Pause and cancel are checked in short steps, and waiting for a retry counts as
+# part of the run the user is allowed to stop.
+CONTROL_POLL_SECONDS = 0.25
+
 # Apple answers 4xx for dead, private, or rate limited links. Retrying those just
 # makes the user wait for an answer that will not change, so only retry 5xx and
 # connection level failures (or the couple of 4xx codes that are worth another try).
@@ -134,8 +147,8 @@ def _is_valid_apple_playlist_url(url: str) -> bool:
     return clean.startswith("https://music.apple.com/") and "/playlist/" in clean
 
 
-def _fetch_playlist_page(url: str) -> str:
-    return _fetch_text(url)
+def _fetch_playlist_page(url: str, controls: DownloadControls | None = None) -> str:
+    return _fetch_text(url, controls=controls)
 
 
 def _clean_track_text(value: str) -> str:
@@ -234,23 +247,37 @@ def _wait_if_paused(controls: DownloadControls | None) -> None:
     while controls and controls.pause_event and controls.pause_event.is_set():
         if controls.cancel_event and controls.cancel_event.is_set():
             raise DownloadCancelled("Download cancelled.")
-        time.sleep(0.25)
+        time.sleep(CONTROL_POLL_SECONDS)
 
 
-def read_playlist_tracks(url: str) -> list[tuple[str, str]]:
+def _interruptible_sleep(seconds: float, controls: DownloadControls | None) -> None:
+    """Wait in small steps so pause and cancel stay responsive during a backoff."""
+    deadline = time.monotonic() + max(seconds, 0.0)
+    while True:
+        _wait_if_paused(controls)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(CONTROL_POLL_SECONDS, remaining))
+
+
+def read_playlist_tracks(url: str, controls: DownloadControls | None = None) -> list[tuple[str, str]]:
     if not _is_valid_apple_playlist_url(url):
         raise PlaylistDownloaderError(
             "That doesn't look like an Apple Music link. It should start with music.apple.com/..."
         )
 
     try:
-        html = _fetch_playlist_page(url)
+        html = _fetch_playlist_page(url, controls=controls)
+    except DownloadCancelled:
+        raise
     except Exception as exc:
         raise PlaylistDownloaderError(_fetch_error_message(exc)) from exc
 
     tracks = _extract_tracks_from_apple_json_scripts(html)
-    token_candidates = [] if tracks else _discover_musickit_tokens(html, page_url=url)
+    token_candidates = [] if tracks else _discover_musickit_tokens(html, page_url=url, controls=controls)
     for token in token_candidates:
+        _wait_if_paused(controls)
         try:
             tracks = _fetch_playlist_tracks_via_api(url, token=token)
         except Exception:
@@ -329,12 +356,23 @@ def _extract_script_urls(html: str, page_url: str) -> list[str]:
     return full
 
 
-def _fetch_text(url: str) -> str:
+def _fetch_text(
+    url: str,
+    *,
+    attempts: int | None = None,
+    timeout: int | None = None,
+    controls: DownloadControls | None = None,
+) -> str:
+    # Resolved here rather than in the signature so the module constants stay
+    # the single source of truth (and can be tuned at runtime).
+    attempts = FETCH_ATTEMPTS if attempts is None else attempts
+    timeout = FETCH_TIMEOUT_SECONDS if timeout is None else timeout
     last_error: Exception | None = None
-    for attempt in range(FETCH_ATTEMPTS):
+    for attempt in range(max(attempts, 1)):
+        _wait_if_paused(controls)
         req = Request(url, headers=_browser_headers())
         try:
-            with urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as response:  # noqa: S310
+            with urlopen(req, timeout=timeout) as response:  # noqa: S310
                 return response.read().decode("utf-8", errors="ignore")
         except HTTPError as exc:
             if exc.code not in RETRYABLE_HTTP_STATUS:
@@ -342,13 +380,18 @@ def _fetch_text(url: str) -> str:
             last_error = exc
         except Exception as exc:
             last_error = exc
-        time.sleep(FETCH_RETRY_BACKOFF_SECONDS * (attempt + 1))
+        _interruptible_sleep(FETCH_RETRY_BACKOFF_SECONDS * (attempt + 1), controls)
     if last_error:
         raise last_error
     return ""
 
 
-def _discover_musickit_tokens(html: str, page_url: str) -> list[str]:
+def _discover_musickit_tokens(
+    html: str,
+    page_url: str,
+    controls: DownloadControls | None = None,
+) -> list[str]:
+    _wait_if_paused(controls)
     tokens: list[str] = []
     direct = _extract_musickit_token(html)
     if direct:
@@ -357,13 +400,22 @@ def _discover_musickit_tokens(html: str, page_url: str) -> list[str]:
     # Fallback 1: any JWT-looking strings in initial HTML.
     tokens.extend(_extract_jwt_candidates(html))
 
-    # Fallback 2: scan linked JS bundles for JWT tokens.
+    # Fallback 2: scan linked JS bundles for JWT tokens. Best effort only, so a
+    # bundle that is slow or missing must never turn into a long wait.
     script_urls = _extract_script_urls(html, page_url=page_url)
-    for script_url in script_urls[:20]:
+    for script_url in script_urls[:MAX_SCRIPT_BUNDLES]:
         if not script_url.endswith(".js"):
             continue
+        _wait_if_paused(controls)
         try:
-            js = _fetch_text(script_url)
+            js = _fetch_text(
+                script_url,
+                attempts=BEST_EFFORT_FETCH_ATTEMPTS,
+                timeout=BEST_EFFORT_FETCH_TIMEOUT_SECONDS,
+                controls=controls,
+            )
+        except DownloadCancelled:
+            raise
         except Exception:
             continue
         tokens.extend(_extract_jwt_candidates(js))
@@ -512,7 +564,7 @@ def download_playlist(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     log_callback("Reading Apple Music playlist...")
-    tracks = read_playlist_tracks(url)
+    tracks = read_playlist_tracks(url, controls=controls)
 
     total = len(tracks)
     log_callback(f"Found {total} song(s). Starting downloads...")
