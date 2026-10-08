@@ -249,7 +249,41 @@ class MainWindow(tk.Frame):
             self.output_var.set(selected)
 
     def _open_output_folder(self) -> None:
-        open_folder(Path(self.output_var.get()))
+        value = self.output_var.get().strip()
+        if not value:
+            messagebox.showerror("Missing folder", "Choose a folder to save the songs in.")
+            return
+        target = Path(value).expanduser()
+        if open_folder(target):
+            return
+        if not target.exists():
+            messagebox.showinfo(
+                "Folder not there yet",
+                f"{target}\n\nThis folder is created when a download starts.",
+            )
+        else:
+            messagebox.showerror("Can't open folder", f"Could not open:\n{target}")
+
+    def _ensure_output_dir(self) -> bool:
+        """Make sure the save folder is usable before a run starts.
+
+        An empty field used to mean `Path("")`, which is the current directory,
+        so songs ended up in the app folder instead of the one the user picked,
+        and a path on a missing or read only drive failed later on with a
+        generic message. Both are reported here instead.
+        """
+        value = self.output_var.get().strip()
+        if not value:
+            messagebox.showerror("Missing folder", "Choose a folder to save the songs in.")
+            return False
+        target = Path(value).expanduser()
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            messagebox.showerror("Folder unavailable", f"Could not use that folder:\n{exc}")
+            return False
+        self.output_var.set(str(target))
+        return True
 
     def _append_log(self, line: str) -> None:
         self.log_text.configure(state="normal")
@@ -298,13 +332,15 @@ class MainWindow(tk.Frame):
             return
 
         url = self.url_var.get().strip()
-        settings = self._settings()
-        if force_skip_existing:
-            settings.skip_existing = True
-
         if not url:
             messagebox.showerror("Missing link", "Paste an Apple Music playlist link first.")
             return
+        if not self._ensure_output_dir():
+            return
+
+        settings = self._settings()
+        if force_skip_existing:
+            settings.skip_existing = True
 
         has_ffmpeg, _ = detect_ffmpeg()
         if not has_ffmpeg:
@@ -413,10 +449,13 @@ class MainWindow(tk.Frame):
         if self.download_in_progress or self.utility_in_progress:
             return
         url = self.url_var.get().strip()
-        settings = self._settings()
         if not url:
             messagebox.showerror("Missing link", "Paste an Apple Music playlist link first.")
             return
+        if not self._ensure_output_dir():
+            return
+
+        settings = self._settings()
 
         self.config.output_dir = str(settings.output_dir)
         self.config.output_format = settings.output_format
