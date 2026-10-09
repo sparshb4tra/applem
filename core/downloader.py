@@ -14,7 +14,6 @@ from urllib.request import Request, urlopen
 from urllib.parse import urlparse, urljoin
 
 from yt_dlp import YoutubeDL
-from yt_dlp.utils import DownloadError
 
 ProgressCallback = Callable[[int, int, str], None]
 LogCallback = Callable[[str], None]
@@ -239,6 +238,83 @@ def _track_output_path(output_dir: Path, output_format: str, index: int, title: 
 
 def _is_complete_audio_file(path: Path) -> bool:
     return path.exists() and path.is_file() and path.stat().st_size > 1024
+
+
+# Containers yt-dlp can hand back for `bestaudio/best`. The app itself only
+# ever writes mp3 or wav, so a file with a track's own name in one of these is
+# an unfinished download, not a song.
+SOURCE_CONTAINER_EXTS = frozenset(
+    {"3gp", "aac", "flac", "m4a", "mka", "mkv", "mp4", "ogg", "opus", "ts", "weba", "webm"}
+)
+
+
+def _is_unfinished_track_name(rest: str, output_format: str) -> bool:
+    """Does the part after `{stem}.` look like leftover download state?
+
+    yt-dlp names its temp files after the target file: `song.webm.part` while
+    downloading, `song.webm.part-Frag7` for fragmented sources, and a
+    `song.webm.ytdl` info sidecar. When the ffmpeg step fails it leaves the
+    source audio itself behind.
+    """
+    lowered = rest.lower()
+    if lowered.endswith(".ytdl") or ".part" in lowered:
+        return True
+    # A bare source container (`song.webm`) has no further dot; a nested one
+    # (`song.webm.part`) was already caught above.
+    extension = lowered.rsplit(".", 1)[-1]
+    return extension in SOURCE_CONTAINER_EXTS and extension != output_format
+
+
+def _unfinished_track_files(
+    output_dir: Path,
+    output_format: str,
+    index: int,
+    title: str,
+    artist: str,
+) -> list[Path]:
+    """Files left behind by an unfinished attempt at one track.
+
+    Only files that carry this track's exact name are considered, and the
+    finished song (`{stem}.mp3` / `.wav`) is never included, so a stray
+    partial can be cleared without touching what the user already has.
+    """
+    stem = _track_file_stem(index, title, artist)
+    finished_name = _track_output_path(output_dir, output_format, index, title, artist).name
+    if not output_dir.is_dir():
+        return []
+
+    leftovers: list[Path] = []
+    for candidate in sorted(output_dir.iterdir()):
+        if not candidate.name.startswith(f"{stem}.") or candidate.name == finished_name:
+            continue
+        if not candidate.is_file():
+            continue
+        if _is_unfinished_track_name(candidate.name[len(stem) + 1 :], output_format):
+            leftovers.append(candidate)
+    return leftovers
+
+
+def _remove_unfinished_track_files(
+    output_dir: Path,
+    output_format: str,
+    index: int,
+    title: str,
+    artist: str,
+    log_callback: LogCallback | None = None,
+) -> list[Path]:
+    """Delete this track's partial download so the folder only holds songs."""
+    removed: list[Path] = []
+    for path in _unfinished_track_files(output_dir, output_format, index, title, artist):
+        try:
+            path.unlink()
+        except OSError as exc:
+            if log_callback:
+                log_callback(f"WARN  could not remove {path.name} ({exc})")
+            continue
+        removed.append(path)
+        if log_callback:
+            log_callback(f"CLEAN  {path.name} (unfinished download removed)")
+    return removed
 
 
 def _wait_if_paused(controls: DownloadControls | None) -> None:
@@ -581,6 +657,11 @@ def download_playlist(
             continue
 
         log_callback(f"... {title} - {artist} (searching/downloading...)")
+        # A run that was killed, or an earlier cancelled attempt, can leave this
+        # track's partial download behind. Clearing it first means the retry
+        # starts clean instead of resuming a fragment that may belong to a
+        # different video than the one this attempt picks.
+        _remove_unfinished_track_files(output_dir, output_format, index, title, artist, log_callback)
 
         try:
             _download_track_from_youtube(
@@ -595,17 +676,17 @@ def download_playlist(
             )
             log_callback(f"OK  {title} - {artist}")
         except DownloadCancelled:
+            _remove_unfinished_track_files(output_dir, output_format, index, title, artist, log_callback)
             raise
-        except DownloadError as exc:
-            reason = str(exc)
-            failures.append((track_name, reason))
-            error_callback(track_name, reason)
-            log_callback(f"WARN  {title} - {artist} (failed)")
         except Exception as exc:
+            # DownloadError included: either way the track did not land, so it
+            # is reported to the user and retried later.
             reason = str(exc)
             failures.append((track_name, reason))
             error_callback(track_name, reason)
             log_callback(f"WARN  {title} - {artist} (failed)")
+            # Whatever the failed attempt wrote is not a song: drop it.
+            _remove_unfinished_track_files(output_dir, output_format, index, title, artist, log_callback)
 
     if failures:
         failed_path = output_dir / "failed_downloads.txt"

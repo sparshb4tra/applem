@@ -11,6 +11,7 @@ no apple login. no cookies. no browser extension. just the playlist url.
 - searches youtube for each track with `yt-dlp`
 - saves numbered audio files like `001 - song - artist.mp3`
 - skips files you already downloaded
+- cleans up an unfinished download, so a cancelled or failed track leaves no stray partial files
 - lets you pause, resume, cancel, verify, and retry missing tracks
 - writes failed tracks to `failed_downloads.txt`
 - writes verification results to `verification_report.txt`
