@@ -41,6 +41,11 @@ CONTROL_POLL_SECONDS = 0.25
 # connection level failures (or the couple of 4xx codes that are worth another try).
 RETRYABLE_HTTP_STATUS = {408, 425, 429, 500, 502, 503, 504}
 
+# The report of the tracks a run could not download. It is written into the
+# user's save folder and the "finished with warnings" dialog points straight at
+# it, so it has to describe the run that just ended, not an older one.
+FAILED_TRACKS_FILENAME = "failed_downloads.txt"
+
 
 def _fetch_error_message(exc: Exception) -> str:
     """Turn a fetch failure into something a user can actually act on."""
@@ -405,6 +410,40 @@ def verify_playlist_downloads(url: str, output_dir: Path, output_format: str) ->
     )
 
 
+def _write_failed_tracks(
+    output_dir: Path,
+    failures: list[tuple[str, str]],
+    log_callback: LogCallback | None = None,
+) -> Path | None:
+    """Keep the failure report equal to the failures of the run that ended.
+
+    The save folder is opened automatically when a run finishes, and the
+    "finished with warnings" dialog tells the user to look in this file, so a
+    report left over from an earlier run reads as a lie: after "retry missing"
+    fills every gap the file still lists the songs that now exist next to it.
+    A run with nothing to report clears the stale file instead of leaving it,
+    and a file that cannot be removed is reported rather than raised, because
+    the run itself did succeed.
+    """
+    report_path = output_dir / FAILED_TRACKS_FILENAME
+    if failures:
+        lines = [f"{name} | {reason}" for name, reason in failures]
+        report_path.write_text("\n".join(lines), encoding="utf-8")
+        return report_path
+
+    if not report_path.exists():
+        return None
+    try:
+        report_path.unlink()
+    except OSError as exc:
+        if log_callback:
+            log_callback(f"WARN  could not remove {FAILED_TRACKS_FILENAME} ({exc})")
+        return None
+    if log_callback:
+        log_callback(f"CLEAN  {FAILED_TRACKS_FILENAME} (no failed songs in this run)")
+    return None
+
+
 def _extract_musickit_token(html: str) -> str:
     # MusicKit token is usually embedded as a JWT string.
     patterns = [
@@ -688,10 +727,7 @@ def download_playlist(
             # Whatever the failed attempt wrote is not a song: drop it.
             _remove_unfinished_track_files(output_dir, output_format, index, title, artist, log_callback)
 
-    if failures:
-        failed_path = output_dir / "failed_downloads.txt"
-        lines = [f"{name} | {reason}" for name, reason in failures]
-        failed_path.write_text("\n".join(lines), encoding="utf-8")
+    _write_failed_tracks(output_dir, failures, log_callback)
     return failures
 
 
