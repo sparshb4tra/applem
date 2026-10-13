@@ -32,6 +32,10 @@ BEST_EFFORT_FETCH_ATTEMPTS = 1
 BEST_EFFORT_FETCH_TIMEOUT_SECONDS = 10
 MAX_SCRIPT_BUNDLES = 20
 
+# The MusicKit API fallback walks a playlist a few hundred tracks at a time, so
+# this is the wait for one page of that walk rather than for the whole read.
+API_FETCH_TIMEOUT_SECONDS = 20
+
 # Pause and cancel are checked in short steps, and waiting for a retry counts as
 # part of the run the user is allowed to stop.
 CONTROL_POLL_SECONDS = 0.25
@@ -360,7 +364,12 @@ def read_playlist_tracks(url: str, controls: DownloadControls | None = None) -> 
     for token in token_candidates:
         _wait_if_paused(controls)
         try:
-            tracks = _fetch_playlist_tracks_via_api(url, token=token)
+            tracks = _fetch_playlist_tracks_via_api(url, token=token, controls=controls)
+        except DownloadCancelled:
+            # The API walk is the longest part of a read, so a cancel raised
+            # inside it has to stop the run, not be swallowed and answered with
+            # "Could not read songs from that playlist".
+            raise
         except Exception:
             tracks = []
         if tracks:
@@ -561,7 +570,17 @@ def _playlist_id_from_url(url: str) -> str:
     return parts[-1] if parts else ""
 
 
-def _fetch_playlist_tracks_via_api(url: str, token: str) -> list[tuple[str, str]]:
+def _fetch_playlist_tracks_via_api(
+    url: str,
+    token: str,
+    controls: DownloadControls | None = None,
+) -> list[tuple[str, str]]:
+    """Read the playlist from Apple's API, one page at a time.
+
+    This fallback only runs when the playlist page did not carry the track list,
+    and a big playlist can take several pages to walk, so pause and cancel are
+    checked before every page instead of once for the whole read.
+    """
     storefront = _storefront_from_url(url)
     playlist_id = _playlist_id_from_url(url)
     if not playlist_id:
@@ -577,6 +596,7 @@ def _fetch_playlist_tracks_via_api(url: str, token: str) -> list[tuple[str, str]
     next_path: str | None = first_url
 
     while next_path:
+        _wait_if_paused(controls)
         req = Request(
             next_path,
             headers={
@@ -589,7 +609,7 @@ def _fetch_playlist_tracks_via_api(url: str, token: str) -> list[tuple[str, str]
                 "Accept-Language": "en-US,en;q=0.9",
             },
         )
-        with urlopen(req, timeout=20) as resp:  # noqa: S310
+        with urlopen(req, timeout=API_FETCH_TIMEOUT_SECONDS) as resp:  # noqa: S310
             payload = json.loads(resp.read().decode("utf-8", errors="ignore"))
 
         # The included tracks are in the "included" list with type "songs".
