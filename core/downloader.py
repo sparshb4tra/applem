@@ -245,8 +245,85 @@ def _track_output_path(output_dir: Path, output_format: str, index: int, title: 
     return output_dir / f"{_track_file_stem(index, title, artist)}.{output_format}"
 
 
+# Songs are numbered by their position in the playlist, and that position does
+# not hold still: the user can add, drop or reorder tracks between two runs, and
+# the reader itself can come back with a different order or length depending on
+# whether it read the page, Apple's API, or the embedded HTML. The part of the
+# filename after the number is the song's own name, so that is what a later run
+# matches on when it asks "do I already have this one".
+_NUMBERED_TRACK_NAME = re.compile(r"^\d+ - (?P<name>.+)$")
+
+
+def _track_name_key(title: str, artist: str) -> str:
+    """The `title - artist` part of a track's filename, used as a lookup key."""
+    return f"{_safe_filename_part(title)} - {_safe_filename_part(artist)}".casefold()
+
+
+def _tracks_in_folder(output_dir: Path, output_format: str) -> dict[str, Path]:
+    """One pass over the save folder: `title - artist` -> the song downloaded for it.
+
+    Only files the app itself writes count: a number, ` - `, then the song's
+    name and the chosen format. An unfinished download (`song.webm.part`, a
+    `.ytdl` sidecar, the source container ffmpeg never converted) and a file in
+    the other format are not songs and stay out of the map, so a caller can
+    still tell a partial download from a finished one.
+    """
+    found: dict[str, Path] = {}
+    if not output_dir.is_dir():
+        return found
+
+    suffix = f".{output_format}"
+    for candidate in sorted(output_dir.iterdir()):
+        name = candidate.name
+        if not name.casefold().endswith(suffix):
+            continue
+        match = _NUMBERED_TRACK_NAME.match(name)
+        if match is None:
+            continue
+        song_name = match.group("name")
+        if len(song_name) <= len(suffix):
+            continue
+        if not candidate.is_file():
+            continue
+        # First number wins, so the map is stable across runs and two entries of
+        # the same song in one playlist agree on the file they point at.
+        found.setdefault(song_name[: -len(suffix)].casefold(), candidate)
+    return found
+
+
+def _existing_track(
+    tracks_in_folder: dict[str, Path],
+    title: str,
+    artist: str,
+) -> Path | None:
+    """The finished-looking file this song already has in the folder, if any."""
+    return tracks_in_folder.get(_track_name_key(title, artist))
+
+
 def _is_complete_audio_file(path: Path) -> bool:
     return path.exists() and path.is_file() and path.stat().st_size > 1024
+
+
+def _remove_superseded_track_file(path: Path, log_callback: LogCallback | None = None) -> bool:
+    """Drop a file that carries a song's name but is not a finished download.
+
+    The file has this app's own numbering, this song's name and a size no audio
+    file has, so it is the remains of an attempt that was cut off, not something
+    the user put there. The run that decided to fetch the song again writes it
+    under the number that run gives it, and a broken copy left next to the new
+    one would sit in the folder for good.
+    """
+    try:
+        # Missing counts as gone: another entry of the same song in one playlist
+        # can have taken this copy's place already.
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        if log_callback:
+            log_callback(f"WARN  could not remove {path.name} ({exc})")
+        return False
+    if log_callback:
+        log_callback(f"CLEAN  {path.name} (incomplete copy removed)")
+    return True
 
 
 # Containers yt-dlp can hand back for `bestaudio/best`. The app itself only
@@ -382,20 +459,29 @@ def read_playlist_tracks(url: str, controls: DownloadControls | None = None) -> 
 
 
 def verify_playlist_downloads(url: str, output_dir: Path, output_format: str) -> VerificationResult:
+    """Check every song in the playlist is in the folder, and write a report.
+
+    A song counts as present when the folder holds a file with its name in the
+    chosen format, whatever number that file carries: the numbers come from the
+    position a song had when it was downloaded, and the playlist may well have
+    been reordered since.
+    """
     if output_format not in {"mp3", "wav"}:
         raise PlaylistDownloaderError("Unsupported output format.")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     tracks = read_playlist_tracks(url)
+    tracks_in_folder = _tracks_in_folder(output_dir, output_format)
     missing: list[VerificationItem] = []
     incomplete: list[VerificationItem] = []
 
     for index, (title, artist) in enumerate(tracks, start=1):
         expected_path = _track_output_path(output_dir, output_format, index, title, artist)
-        if not expected_path.exists():
+        downloaded = _existing_track(tracks_in_folder, title, artist)
+        if downloaded is None:
             missing.append(VerificationItem(index, title, artist, expected_path, "missing"))
-        elif not _is_complete_audio_file(expected_path):
-            incomplete.append(VerificationItem(index, title, artist, expected_path, "incomplete"))
+        elif not _is_complete_audio_file(downloaded):
+            incomplete.append(VerificationItem(index, title, artist, downloaded, "incomplete"))
 
     present = len(tracks) - len(missing) - len(incomplete)
     report_path = output_dir / "verification_report.txt"
@@ -705,15 +791,30 @@ def download_playlist(
     log_callback(f"Found {total} song(s). Starting downloads...")
     failures: list[tuple[str, str]] = []
 
+    # One look at the folder before the run, so "skip songs already downloaded"
+    # follows the song's name and not the number it was saved under.
+    tracks_in_folder = _tracks_in_folder(output_dir, output_format) if skip_existing else {}
+
     for index, (title, artist) in enumerate(tracks, start=1):
         _wait_if_paused(controls)
         track_name = f"{title} - {artist}"
         progress_callback(index, total, track_name)
 
         expected_path = _track_output_path(output_dir, output_format, index, title, artist)
-        if skip_existing and _is_complete_audio_file(expected_path):
-            log_callback(f"SKIP  {title} - {artist} (already downloaded)")
-            continue
+        if skip_existing:
+            already_have = _existing_track(tracks_in_folder, title, artist)
+            if already_have is not None:
+                if _is_complete_audio_file(already_have):
+                    if already_have == expected_path:
+                        log_callback(f"SKIP  {title} - {artist} (already downloaded)")
+                    else:
+                        log_callback(f"SKIP  {title} - {artist} (already downloaded as {already_have.name})")
+                    continue
+                # Something carries this song's name and is not a song, so this
+                # run fetches it again. Clear the broken copy first: it was
+                # written under an older number, and the new download lands under
+                # the number this run gives the song.
+                _remove_superseded_track_file(already_have, log_callback)
 
         log_callback(f"... {title} - {artist} (searching/downloading...)")
         # A run that was killed, or an earlier cancelled attempt, can leave this
@@ -734,6 +835,10 @@ def download_playlist(
                 controls=controls,
             )
             log_callback(f"OK  {title} - {artist}")
+            if skip_existing:
+                # A playlist can list the same song twice. The second entry must
+                # see the copy this run just wrote, not fetch the song again.
+                tracks_in_folder[_track_name_key(title, artist)] = expected_path
         except DownloadCancelled:
             _remove_unfinished_track_files(output_dir, output_format, index, title, artist, log_callback)
             raise

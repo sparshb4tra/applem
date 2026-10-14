@@ -10,8 +10,9 @@ no apple login. no cookies. no browser extension. just the playlist url.
 - reads songs from a public apple music playlist
 - searches youtube for each track with `yt-dlp`
 - saves numbered audio files like `001 - song - artist.mp3`
-- skips files you already downloaded
+- skips songs you already downloaded, even if the playlist reordered them since
 - cleans up an unfinished download, so a cancelled or failed track leaves no stray partial files
+- replaces a cut off copy instead of keeping two files of the same song
 - lets you pause, resume, cancel, verify, and retry missing tracks
 - writes failed tracks to `failed_downloads.txt`, and clears a stale report when a run ends with none
 - writes verification results to `verification_report.txt`
