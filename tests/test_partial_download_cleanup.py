@@ -11,6 +11,12 @@ report, and that a later retry can resume into.
 `download_playlist` now clears the leftovers of the track it is about to try
 and of the track that just failed, which is what these tests pin down.
 
+A leftover is found by the song's name rather than by the number in front of
+it: that number is the position the song had when the attempt was made, and a
+playlist that gained, lost or reordered tracks since then hands the song a
+different number now, so a part written before the reorder used to sit in the
+folder for good.
+
 Runs fully offline: the playlist reader is swapped for a fixed track list and
 the YouTube download is swapped for a fake that writes the same files yt-dlp
 does and then fails. No network, no ffmpeg, no real downloads.
@@ -62,8 +68,8 @@ class UnfinishedFileTests(unittest.TestCase):
         path.write_bytes(payload)
         return path
 
-    def _remove(self, output_format: str = "mp3", index: int = 1, tracks: tuple[str, str] = TRACK):
-        return _remove_unfinished_track_files(self.output_dir, output_format, index, tracks[0], tracks[1])
+    def _remove(self, output_format: str = "mp3", tracks: tuple[str, str] = TRACK) -> list[Path]:
+        return _remove_unfinished_track_files(self.output_dir, output_format, tracks[0], tracks[1])
 
     def test_partial_from_a_cancelled_download_is_removed(self) -> None:
         part = self._make(f"{STEM}.webm.part")
@@ -103,9 +109,41 @@ class UnfinishedFileTests(unittest.TestCase):
         title = "Song [Remix]"
         stem = _track_file_stem(2, title, TRACK[1])
         part = self._make(f"{stem}.webm.part")
-        removed = _remove_unfinished_track_files(self.output_dir, "mp3", 2, title, TRACK[1])
+        removed = _remove_unfinished_track_files(self.output_dir, "mp3", title, TRACK[1])
         self.assertEqual(removed, [part])
         self.assertFalse(part.exists())
+
+    def test_a_partial_under_the_number_of_an_earlier_run_is_removed(self) -> None:
+        # Cancelled while this song sat at 7 in the playlist; the playlist was
+        # reordered since, so the number the retry gives it is not 7 any more.
+        stale = self._make(f"{_track_file_stem(7, *TRACK)}.webm.part")
+        removed = self._remove()
+        self.assertEqual(removed, [stale])
+        self.assertFalse(stale.exists())
+
+    def test_a_title_with_a_dot_is_cleaned_up_under_any_number(self) -> None:
+        # The dot belongs to the song's name, not to the download state after it.
+        title = "Mr. Brightside"
+        part = self._make(f"{_track_file_stem(4, title, TRACK[1])}.m4a.ytdl", payload=b"{}")
+        removed = _remove_unfinished_track_files(self.output_dir, "mp3", title, TRACK[1])
+        self.assertEqual(removed, [part])
+
+    def test_a_finished_song_under_an_earlier_number_is_never_removed(self) -> None:
+        earlier = self._make(f"{_track_file_stem(7, *TRACK)}.mp3")
+        self.assertEqual(self._remove(), [])
+        self.assertTrue(earlier.exists())
+
+    def test_a_name_that_only_starts_the_same_is_left_alone(self) -> None:
+        # "Test Song - Test Artist Live" is a different track.
+        other = self._make(f"{_track_file_stem(7, 'Test Song - Test Artist Live', TRACK[1])}.webm.part")
+        self.assertEqual(self._remove(), [])
+        self.assertTrue(other.exists())
+
+    def test_a_file_the_app_did_not_write_is_left_alone(self) -> None:
+        # No number in front: the app never writes it, so it is not ours to clear.
+        keep = self._make("Test Song - Test Artist.webm.part")
+        self.assertEqual(self._remove(), [])
+        self.assertTrue(keep.exists())
 
     def test_another_tracks_partial_is_left_alone(self) -> None:
         other_stem = _track_file_stem(2, "Other Song", TRACK[1])
@@ -120,12 +158,12 @@ class UnfinishedFileTests(unittest.TestCase):
 
     def test_a_missing_folder_is_not_an_error(self) -> None:
         missing = self.output_dir / "not-created-yet"
-        self.assertEqual(_unfinished_track_files(missing, "mp3", 1, *TRACK), [])
+        self.assertEqual(_unfinished_track_files(missing, "mp3", *TRACK), [])
 
     def test_removals_are_logged(self) -> None:
         self._make(f"{STEM}.webm.part")
         lines: list[str] = []
-        _remove_unfinished_track_files(self.output_dir, "mp3", 1, *TRACK, log_callback=lines.append)
+        _remove_unfinished_track_files(self.output_dir, "mp3", *TRACK, log_callback=lines.append)
         self.assertEqual(len(lines), 1)
         self.assertIn("CLEAN", lines[0])
         self.assertIn(f"{STEM}.webm.part", lines[0])
@@ -216,6 +254,58 @@ class DownloadCleanupTests(unittest.TestCase):
         self.assertEqual(failures, [])
         self.assertEqual(seen_at_start, [[]], "the stale partial should be gone before the attempt")
         self.assertEqual(self._files(), [f"{STEM}.mp3"])
+
+    def test_a_stale_partial_under_an_old_number_goes_with_the_retry(self) -> None:
+        # The run that wrote this part was cancelled before the playlist was
+        # reordered, so the song is number 1 now and the part is still at 9.
+        stale = self.output_dir / f"{_track_file_stem(9, *TRACK)}.webm"
+        stale.write_bytes(b"half a song from an earlier run")
+        seen_at_start: list[list[str]] = []
+
+        def fake(
+            query,
+            title,
+            artist,
+            index,
+            output_dir,
+            output_format,
+            ffmpeg_path,
+            controls=None,
+        ):
+            seen_at_start.append(sorted(path.name for path in Path(output_dir).iterdir()))
+            _track_output_path(Path(output_dir), output_format, index, title, artist).write_bytes(b"m" * 2048)
+
+        self._patch(downloader, "_download_track_from_youtube", fake)
+        failures = self._run()
+
+        self.assertEqual(failures, [])
+        self.assertEqual(seen_at_start, [[]], "the old numbered partial should be gone before the attempt")
+        self.assertFalse(stale.exists())
+        self.assertEqual(self._files(), [f"{STEM}.mp3"])
+
+    def test_a_cancel_clears_a_part_however_it_is_numbered(self) -> None:
+        # A run that is cut off is exactly when parts are left behind, and the
+        # one sitting in the folder by then can carry the number of an earlier
+        # run, so the cancel cleanup looks the song up by name too.
+        def fake(
+            query,
+            title,
+            artist,
+            index,
+            output_dir,
+            output_format,
+            ffmpeg_path,
+            controls=None,
+        ):
+            (Path(output_dir) / f"{_track_file_stem(9, title, artist)}.webm.part").write_bytes(b"partial bytes")
+            raise DownloadCancelled("Download cancelled.")
+
+        self._patch(downloader, "_download_track_from_youtube", fake)
+
+        with self.assertRaises(DownloadCancelled):
+            self._run()
+
+        self.assertEqual(self._files(), [])
 
     def test_a_failed_read_still_reports_the_playlist_error(self) -> None:
         # Nothing downloaded yet: the cleanup must not hide playlist errors.
