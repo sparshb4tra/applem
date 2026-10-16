@@ -55,7 +55,7 @@ the folder opens when the run finishes.
 - this does not download from apple music directly
 - apple music is used for the public playlist track list
 - youtube is used for matched audio downloads
-- `ffmpeg` is needed for conversion
+- `yt-dlp` fetches the audio and `ffmpeg` converts it; the launchers install both, and the app says what to do if one is missing
 - matching depends on youtube search, so weird covers/live versions can happen sometimes
 
 ## open source

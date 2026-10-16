@@ -7,7 +7,6 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from core.config import load_config, save_config
-from ui.main_window import MainWindow
 
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
@@ -18,8 +17,24 @@ def _check_python_version() -> None:
 
 
 def _check_required_packages() -> None:
+    """Report a missing yt-dlp before anything imports it.
+
+    The downloader imports yt-dlp at module import time and the window module
+    imports the downloader, so as long as the window was imported at the top of
+    this file the check could never run: `python app.py` died on the import
+    line and the user got a ModuleNotFoundError traceback instead of these
+    steps. That is why `main` imports the window only after this check has
+    passed.
+    """
     if importlib.util.find_spec("yt_dlp") is None:
-        raise RuntimeError("yt-dlp is not installed. Run install script first.")
+        raise RuntimeError(
+            "yt-dlp is missing, and the app needs it to fetch the audio.\n\n"
+            "Close this window and run the setup script for your system:\n"
+            "  setup/install_windows.bat   (windows)\n"
+            "  setup/install_mac.sh        (macos)\n\n"
+            "Or install it yourself:\n"
+            "  python -m pip install -r requirements.txt"
+        )
 
 
 def _configure_style(root: tk.Tk) -> None:
@@ -214,6 +229,11 @@ def _show_startup_error(message: str) -> None:
 
 
 def _launch_main(root: tk.Tk) -> None:
+    # Imported here, not at the top of the file: the window module imports
+    # core.downloader, which imports yt-dlp, and that has to happen after
+    # `main` has checked for yt-dlp and can still say so in a message.
+    from ui.main_window import MainWindow
+
     config = load_config()
     frame = MainWindow(root, config=config)
     frame.pack(fill="both", expand=True)
