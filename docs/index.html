@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="favicon.png" sizes="32x32">
+<link rel="apple-touch-icon" href="app-icon-180.png">
 <title>Apple Music Downloader</title>
 <meta name="description" content="Paste a public Apple Music playlist link and keep the audio as numbered files. No Apple login, no cookies, no browser extension.">
 <script>
@@ -110,7 +112,17 @@
 
   /* ── hero ────────────────────────────────────────────────────────────── */
 
-  .hero { text-align: center; padding: 5.5rem var(--gutter) 3.5rem; }
+  .hero { text-align: center; padding: 4.5rem var(--gutter) 3.5rem; }
+
+  /* drop-shadow rather than box-shadow: the icon's PNG is transparent outside
+     its squircle, and a box-shadow would draw the square behind it */
+  .hero .app-icon {
+    display: block;
+    width: 108px;
+    height: 108px;
+    margin: 0 auto 1.6rem;
+    filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.22));
+  }
 
   .hero h1 {
     margin: 0 auto 1rem;
@@ -184,13 +196,16 @@
   .detail img {
     display: block;
     width: 100%;
-    max-width: 822px;
+    max-width: 902px;      /* the captures' own width: never upscaled */
     height: auto;
     margin: 0 auto;
     border: 1px solid var(--hairline);
     border-radius: 14px;
     background: var(--paper);
   }
+
+  .shot img { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 26px 50px -22px rgba(0, 0, 0, 0.22); }
+  .detail img { border-radius: 10px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 14px 28px -16px rgba(0, 0, 0, 0.16); }
 
   .shot figcaption {
     margin-top: 0.9rem;
@@ -426,6 +441,7 @@
 </nav>
 
 <header class="hero" id="top">
+  <img class="app-icon" src="assets/app-icon.png" width="512" height="512" alt="The Apple Music Downloader app icon: a white arrow pointing down on a pink-to-violet rounded square.">
   <h1>Apple Music Downloader</h1>
   <p class="about">Paste a public Apple Music playlist link and keep the audio as numbered files. It reads the track list from the playlist, matches each song on YouTube, and writes the audio into the folder you pick.</p>
 
@@ -438,7 +454,7 @@
 </header>
 
 <figure class="shot rise">
-  <img src="assets/app-window.png" width="822" height="701" alt="The Apple Music Downloader window: the playlist link field, the save-to folder with a Browse button, the audio format menu set to mp3, the skip-already-downloaded checkbox, the download, pause, resume and cancel buttons, the activity log, and a row of buttons for verifying and retrying downloads.">
+  <img src="assets/app-window.png" width="902" height="741" alt="The Apple Music Downloader window: the playlist link field, the save-to folder with a Browse button, the audio format menu set to mp3, the skip-already-downloaded checkbox, the download, pause, resume and cancel buttons, the activity log, and a row of buttons for verifying and retrying downloads.">
   <figcaption>No Apple login, no cookies, no browser extension. The playlist link is the whole input.</figcaption>
 </figure>
 
@@ -456,7 +472,7 @@
   </div>
 
   <figure class="detail rise">
-    <img src="assets/app-actions.png" width="822" height="71" loading="lazy" decoding="async" alt="The run controls: Download Playlist, Pause, Resume and Cancel.">
+    <img src="assets/app-actions.png" width="902" height="70" loading="lazy" decoding="async" alt="The run controls: Download Playlist, Pause, Resume and Cancel.">
   </figure>
 </section>
 
@@ -467,7 +483,7 @@
   </div>
 
   <figure class="detail rise">
-    <img src="assets/app-verify.png" width="822" height="65" loading="lazy" decoding="async" alt="Three buttons: Verify Downloads, Retry Missing and Open Folder.">
+    <img src="assets/app-verify.png" width="902" height="64" loading="lazy" decoding="async" alt="Three buttons: Verify Downloads, Retry Missing and Open Folder.">
   </figure>
 </section>
 

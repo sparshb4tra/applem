@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import tkinter as tk
+import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import messagebox, ttk
 
@@ -37,6 +38,18 @@ def _check_required_packages() -> None:
         )
 
 
+def _ui_font_family(root: tk.Tk) -> str:
+    """The first of the platform's own UI faces that this machine has."""
+    available = {name.lower() for name in tkfont.families(root)}
+    for candidate in (
+        "SF Pro Text", "SF Pro Display", "Helvetica Neue",
+        "Segoe UI Variable Text", "Segoe UI", "Helvetica", "Arial",
+    ):
+        if candidate.lower() in available:
+            return candidate
+    return tkfont.nametofont("TkDefaultFont").actual("family")
+
+
 def _configure_style(root: tk.Tk) -> None:
     bg = "#f5f5f7"
     panel = "#ffffff"
@@ -53,9 +66,15 @@ def _configure_style(root: tk.Tk) -> None:
     danger = "#ff3b30"
     danger_dark = "#d70015"
     black = "#1d1d1f"
-    body_font = ("Helvetica", 11)
-    button_font = ("Helvetica", 11, "bold")
-    title_font = ("Helvetica", 19, "bold")
+
+    # The platform's own UI face. Helvetica on Windows is only ever a
+    # metrically substituted Arial, which is a large part of why a window set in
+    # it reads as dated; Segoe UI on Windows and SF Pro on macOS are the faces
+    # their own interfaces actually use.
+    family = _ui_font_family(root)
+    body_font = (family, 10)
+    button_font = (family, 10, "bold")
+    title_font = (family, 16, "bold")
 
     style = ttk.Style(root)
     style.theme_use("clam")
@@ -249,8 +268,8 @@ def main() -> None:
 
     root = tk.Tk()
     root.title("Apple Music Downloader")
-    root.geometry("820x700")
-    root.minsize(520, 560)
+    root.geometry("900x740")
+    root.minsize(560, 600)
     _configure_style(root)
     _set_window_icon(root)
 
