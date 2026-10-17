@@ -38,7 +38,7 @@ def _check_required_packages() -> None:
 
 
 def _configure_style(root: tk.Tk) -> None:
-    bg = "#fff7fb"
+    bg = "#f5f5f7"
     panel = "#ffffff"
     text = "#1d1d1f"
     muted = "#6e6e73"
@@ -50,12 +50,6 @@ def _configure_style(root: tk.Tk) -> None:
     control_hover = "#f2f2f4"
     control_pressed = "#e8e8ed"
     disabled = "#eeeeef"
-    blue = "#007aff"
-    blue_dark = "#005ecb"
-    green = "#34c759"
-    green_dark = "#248a3d"
-    orange = "#ff9f0a"
-    orange_dark = "#c46e00"
     danger = "#ff3b30"
     danger_dark = "#d70015"
     black = "#1d1d1f"
@@ -74,6 +68,10 @@ def _configure_style(root: tk.Tk) -> None:
     style.configure("TLabel", background=bg, foreground=text, font=body_font)
     style.configure("Title.TLabel", background=bg, foreground=text, font=title_font)
     style.configure("Muted.TLabel", background=bg, foreground=muted, font=body_font)
+    style.configure("Section.TLabel", background=bg, foreground=muted, font=body_font)
+
+    # Styles for controls that sit on a white card rather than the window.
+    style.configure("Card.TLabel", background=panel, foreground=text, font=body_font)
 
     style.configure(
         "TButton",
@@ -93,41 +91,40 @@ def _configure_style(root: tk.Tk) -> None:
         bordercolor=[("disabled", disabled), ("pressed", border), ("active", border)],
     )
 
+    # Exactly one filled control in the window: the action that starts the run.
     style.configure(
         "Primary.TButton",
-        background=black,
+        background=accent,
         foreground="#ffffff",
-        bordercolor=black,
-        lightcolor=black,
-        darkcolor=black,
+        bordercolor=accent,
+        lightcolor=accent,
+        darkcolor=accent_dark,
+        padding=(16, 10),
     )
     style.map(
         "Primary.TButton",
-        background=[("disabled", disabled), ("pressed", "#000000"), ("active", "#2c2c2e")],
+        background=[("disabled", disabled), ("pressed", accent_dark), ("active", "#ff4b6e")],
         foreground=[("disabled", muted), ("pressed", "#ffffff"), ("active", "#ffffff")],
-        bordercolor=[("disabled", disabled), ("pressed", "#000000"), ("active", "#2c2c2e")],
+        bordercolor=[("disabled", disabled), ("pressed", accent_dark), ("active", "#ff4b6e")],
     )
 
-    def configure_tinted_button(style_name: str, color: str, active_color: str, active_bg: str) -> None:
-        style.configure(
-            style_name,
-            background=control,
-            foreground=color,
-            bordercolor=border,
-            lightcolor=control,
-            darkcolor=border,
-        )
-        style.map(
-            style_name,
-            background=[("disabled", disabled), ("pressed", active_bg), ("active", active_bg)],
-            foreground=[("disabled", muted), ("pressed", active_color), ("active", active_color)],
-            bordercolor=[("disabled", disabled), ("pressed", color), ("active", color)],
-        )
-
-    configure_tinted_button("Pause.TButton", orange, orange_dark, "#fff7e8")
-    configure_tinted_button("Resume.TButton", green, green_dark, "#f0fbf3")
-    configure_tinted_button("Verify.TButton", blue, blue_dark, "#eef6ff")
-    configure_tinted_button("Retry.TButton", accent, accent_dark, "#fff0f4")
+    # The rest of the buttons are neutral: their meaning is in the label, and a
+    # row of differently coloured buttons reads as decoration, not hierarchy.
+    style.configure(
+        "Quiet.TButton",
+        padding=(12, 7),
+        background=control,
+        foreground=text,
+        bordercolor=border,
+        lightcolor=control,
+        darkcolor=border,
+    )
+    style.map(
+        "Quiet.TButton",
+        background=[("disabled", disabled), ("pressed", control_pressed), ("active", control_hover)],
+        foreground=[("disabled", muted), ("pressed", text), ("active", text)],
+        bordercolor=[("disabled", disabled), ("pressed", border), ("active", border)],
+    )
 
     style.configure(
         "Danger.TButton",
@@ -176,17 +173,17 @@ def _configure_style(root: tk.Tk) -> None:
     )
 
     style.configure(
-        "TCheckbutton",
+        "Card.TCheckbutton",
         padding=4,
-        background=bg,
+        background=panel,
         foreground=text,
         indicatorbackground=panel,
         indicatorforeground=accent,
         font=body_font,
     )
     style.map(
-        "TCheckbutton",
-        background=[("active", bg)],
+        "Card.TCheckbutton",
+        background=[("active", panel)],
         foreground=[("disabled", muted), ("active", text)],
         indicatorbackground=[("selected", accent), ("!selected", panel)],
     )
@@ -252,8 +249,8 @@ def main() -> None:
 
     root = tk.Tk()
     root.title("Apple Music Downloader")
-    root.geometry("820x640")
-    root.minsize(520, 520)
+    root.geometry("820x700")
+    root.minsize(520, 560)
     _configure_style(root)
     _set_window_icon(root)
 

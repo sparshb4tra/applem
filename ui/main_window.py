@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import queue
 import threading
 import tkinter as tk
@@ -17,10 +16,19 @@ from utils.open_folder import open_folder
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 
+# The window palette, matching the styles app.py installs. Named here because
+# the layout has to paint its own surfaces: ttk styles cannot round a corner or
+# draw a hairline card, so the cards and the log's border are plain tk frames.
+WINDOW = "#f5f5f7"
+INK = "#1d1d1f"
+PANEL = "#ffffff"
+BORDER = "#d2d2d7"
+ACCENT = "#ff2d55"
+
 
 class MainWindow(tk.Frame):
     def __init__(self, master: tk.Tk, config: AppConfig):
-        super().__init__(master, bg="#fff7fb", padx=14, pady=12)
+        super().__init__(master, bg=WINDOW, padx=20, pady=18)
         self.master = master
         self.config = config
         self.events: queue.Queue[dict] = queue.Queue()
@@ -32,20 +40,32 @@ class MainWindow(tk.Frame):
         self.total_items = 0
         self.current_item = 0
         self._compact_layout = False
-        self._gradient_phase = 0.0
         self.logo_image: tk.PhotoImage | None = None
-        self.gradient_canvas = tk.Canvas(self, highlightthickness=0, bd=0)
-        self.gradient_canvas.place(x=0, y=0, relwidth=1, relheight=1)
-        self._lower_gradient()
         self._build_ui()
         self.bind("<Configure>", self._on_resize)
         self.after_idle(self._refresh_responsive_layout)
-        self.after_idle(self._animate_gradient)
         self.after(100, self.poll_queue)
 
+    def _card(self, row: int, pady: tuple[int, int]) -> tk.Frame:
+        """A white surface with a hairline edge: one group of related controls."""
+        card = tk.Frame(
+            self,
+            bg=PANEL,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            highlightcolor=BORDER,
+        )
+        card.grid(row=row, column=0, columnspan=3, sticky="ew", pady=pady)
+        return card
+
     def _build_ui(self) -> None:
+        # One spacing scale for the whole window: every pad below is a step on
+        # it, so the rhythm is deliberate rather than tuned row by row.
+        xs, sm, md, lg, xl = 4, 8, 12, 16, 20
+
         header = ttk.Frame(self)
-        header.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 12))
+        header.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, xl))
         logo_path = ASSETS_DIR / "logo_header.png"
         if logo_path.exists():
             try:
@@ -53,45 +73,68 @@ class MainWindow(tk.Frame):
             except tk.TclError:
                 self.logo_image = None
         if self.logo_image:
-            ttk.Label(header, image=self.logo_image).grid(row=0, column=0, sticky="w", padx=(0, 10))
-        ttk.Label(header, text="Apple Music Downloader", style="Title.TLabel").grid(row=0, column=1, sticky="w")
+            ttk.Label(header, image=self.logo_image).grid(
+                row=0, column=0, rowspan=2, sticky="w", padx=(0, md)
+            )
+        ttk.Label(header, text="Apple Music Downloader", style="Title.TLabel").grid(
+            row=0, column=1, sticky="w"
+        )
+        ttk.Label(
+            header,
+            text="Paste a public playlist link to begin.",
+            style="Muted.TLabel",
+        ).grid(row=1, column=1, sticky="w", pady=(xs, 0))
         header.columnconfigure(1, weight=1)
 
-        ttk.Label(self, text="Playlist link:").grid(row=1, column=0, sticky="w")
+        # ── where the songs come from ─────────────────────────────────────────
+        ttk.Label(self, text="Playlist", style="Section.TLabel").grid(
+            row=1, column=0, columnspan=3, sticky="w", pady=(0, sm)
+        )
+        source = self._card(row=2, pady=(0, lg))
         self.url_var = tk.StringVar()
-        self.url_entry = ttk.Entry(self, textvariable=self.url_var)
-        self.url_entry.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(2, 12))
+        self.url_entry = ttk.Entry(source, textvariable=self.url_var)
+        self.url_entry.grid(row=0, column=0, sticky="ew", padx=md, pady=md)
+        source.columnconfigure(0, weight=1)
 
-        ttk.Label(self, text="Save to:").grid(row=3, column=0, sticky="w")
+        # ── where they go, and in what form ───────────────────────────────────
+        ttk.Label(self, text="Save to", style="Section.TLabel").grid(
+            row=3, column=0, columnspan=3, sticky="w", pady=(0, sm)
+        )
+        destination = self._card(row=4, pady=(0, lg))
+
         self.output_var = tk.StringVar(value=self.config.output_dir)
-        output_entry = ttk.Entry(self, textvariable=self.output_var)
-        output_entry.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(2, 12))
-        ttk.Button(self, text="Browse", command=self.pick_output_folder).grid(
-            row=4, column=2, sticky="ew", padx=(8, 0), pady=(2, 12)
+        output_entry = ttk.Entry(destination, textvariable=self.output_var)
+        output_entry.grid(row=0, column=0, sticky="ew", padx=(md, sm), pady=(md, md))
+        ttk.Button(destination, text="Browse", command=self.pick_output_folder).grid(
+            row=0, column=1, sticky="ew", padx=(0, md), pady=(md, md)
         )
 
-        options = ttk.Frame(self)
-        options.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(0, 12))
-        ttk.Label(options, text="Audio format:").grid(row=0, column=0, sticky="w")
+        ttk.Label(destination, text="Audio format", style="Card.TLabel").grid(
+            row=1, column=0, sticky="w", padx=(md, sm), pady=(0, md)
+        )
         self.format_var = tk.StringVar(value=self.config.output_format or "mp3")
         ttk.Combobox(
-            options,
+            destination,
             textvariable=self.format_var,
             state="readonly",
             values=("mp3", "wav"),
-            width=12,
-        ).grid(row=0, column=1, sticky="w", padx=(8, 18))
+            width=8,
+        ).grid(row=1, column=1, sticky="w", pady=(0, md))
 
         self.skip_existing_var = tk.BooleanVar(value=self.config.skip_existing)
         ttk.Checkbutton(
-            options,
+            destination,
             text="Skip songs already downloaded",
             variable=self.skip_existing_var,
-        ).grid(row=0, column=2, sticky="e")
-        options.columnconfigure(2, weight=1)
+            style="Card.TCheckbutton",
+        ).grid(row=2, column=0, columnspan=2, sticky="w", padx=md, pady=(0, md))
 
+        destination.columnconfigure(0, weight=1)
+        destination.columnconfigure(1, weight=0, minsize=96)
+
+        # ── the run ───────────────────────────────────────────────────────────
         self.controls_frame = ttk.Frame(self)
-        self.controls_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(0, 10))
+        self.controls_frame.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(0, md))
         self.download_btn = ttk.Button(
             self.controls_frame,
             text="Download Playlist",
@@ -103,14 +146,14 @@ class MainWindow(tk.Frame):
             text="Pause",
             command=self.pause_download,
             state="disabled",
-            style="Pause.TButton",
+            style="Quiet.TButton",
         )
         self.resume_btn = ttk.Button(
             self.controls_frame,
             text="Resume",
             command=self.resume_download,
             state="disabled",
-            style="Resume.TButton",
+            style="Quiet.TButton",
         )
         self.cancel_btn = ttk.Button(
             self.controls_frame,
@@ -122,26 +165,38 @@ class MainWindow(tk.Frame):
         self.control_buttons = [self.download_btn, self.pause_btn, self.resume_btn, self.cancel_btn]
 
         self.progress = ttk.Progressbar(self, mode="determinate")
-        self.progress.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(4, 4))
-        self.progress_label = ttk.Label(self, text="Ready")
-        self.progress_label.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        self.progress.grid(row=6, column=0, columnspan=3, sticky="ew")
+        self.progress_label = ttk.Label(self, text="Ready", style="Muted.TLabel")
+        self.progress_label.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(sm, xl))
 
-        log_frame = ttk.Frame(self)
-        log_frame.grid(row=9, column=0, columnspan=3, sticky="nsew")
+        # ── what is happening ─────────────────────────────────────────────────
+        activity = ttk.Frame(self)
+        activity.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(0, sm))
+        ttk.Label(activity, text="Activity", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        self.clear_log_btn = ttk.Button(
+            activity, text="Clear", command=self.clear_log, style="Quiet.TButton"
+        )
+        self.clear_log_btn.grid(row=0, column=1, sticky="e")
+        activity.columnconfigure(0, weight=1)
+
+        border = tk.Frame(self, bg=BORDER, bd=0, highlightthickness=0)
+        border.grid(row=9, column=0, columnspan=3, sticky="nsew")
+        log_frame = tk.Frame(border, bg=PANEL)
+        log_frame.grid(row=0, column=0, sticky="nsew", padx=1, pady=1)
         self.log_text = tk.Text(
             log_frame,
             width=1,
-            height=10,
+            height=8,
             state="disabled",
             wrap="word",
-            bg="#ffffff",
-            fg="#1d1d1f",
-            insertbackground="#ff2d55",
-            selectbackground="#ff2d55",
+            bg=PANEL,
+            fg=INK,
+            insertbackground=ACCENT,
+            selectbackground=ACCENT,
             selectforeground="#ffffff",
             relief="flat",
             bd=0,
-            padx=10,
+            padx=12,
             pady=10,
             font=("Helvetica", 11),
         )
@@ -151,24 +206,30 @@ class MainWindow(tk.Frame):
         self.log_text.configure(yscrollcommand=log_scroll.set)
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
+        border.columnconfigure(0, weight=1)
+        border.rowconfigure(0, weight=1)
 
+        # ── what you can do to the folder afterwards ──────────────────────────
         self.utilities_frame = ttk.Frame(self)
-        self.utilities_frame.grid(row=10, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        self.utilities_frame.grid(row=10, column=0, columnspan=3, sticky="ew", pady=(md, 0))
         self.verify_btn = ttk.Button(
             self.utilities_frame,
             text="Verify Downloads",
             command=self.start_verify,
-            style="Verify.TButton",
+            style="Quiet.TButton",
         )
         self.retry_btn = ttk.Button(
             self.utilities_frame,
             text="Retry Missing",
             command=self.retry_missing,
-            style="Retry.TButton",
+            style="Quiet.TButton",
         )
-        self.open_folder_btn = ttk.Button(self.utilities_frame, text="Open Downloads Folder", command=self._open_output_folder)
-        self.clear_log_btn = ttk.Button(self.utilities_frame, text="Clear Log", command=self.clear_log)
-        self.utility_buttons = [self.verify_btn, self.retry_btn, self.open_folder_btn, self.clear_log_btn]
+        self.open_folder_btn = ttk.Button(
+            self.utilities_frame, text="Open Folder", command=self._open_output_folder,
+            style="Quiet.TButton",
+        )
+        # Clear lives with the log it clears, not in this row.
+        self.utility_buttons = [self.verify_btn, self.retry_btn, self.open_folder_btn]
 
         self.columnconfigure(0, weight=1)
         self.columnconfigure(1, weight=1)
@@ -197,43 +258,7 @@ class MainWindow(tk.Frame):
     def _on_resize(self, event: tk.Event) -> None:
         if event.widget is not self:
             return
-        self._draw_gradient(event.width, event.height)
         self._refresh_responsive_layout(event.width)
-
-    def _draw_gradient(self, width: int, height: int) -> None:
-        self.gradient_canvas.delete("gradient")
-        if width <= 1 or height <= 1:
-            return
-
-        glow = math.sin(self._gradient_phase)
-        top = (255, 242 + int(glow * 2), 249 + int(glow * 2))
-        middle = (255, 250, 253)
-        bottom = (245, 245, 247)
-        split = 0.58 + (glow * 0.035)
-        steps = max(height, 1)
-        for y in range(steps):
-            if y < steps * split:
-                amount = y / max(steps * split, 1)
-                start, end = top, middle
-            else:
-                amount = (y - steps * split) / max(steps * (1 - split), 1)
-                start, end = middle, bottom
-            red = int(start[0] + (end[0] - start[0]) * amount)
-            green = int(start[1] + (end[1] - start[1]) * amount)
-            blue = int(start[2] + (end[2] - start[2]) * amount)
-            color = f"#{red:02x}{green:02x}{blue:02x}"
-            self.gradient_canvas.create_line(0, y, width, y, fill=color, tags=("gradient",))
-        self._lower_gradient()
-
-    def _animate_gradient(self) -> None:
-        if not self.winfo_exists():
-            return
-        self._gradient_phase = (self._gradient_phase + 0.045) % (math.pi * 2)
-        self._draw_gradient(self.winfo_width(), self.winfo_height())
-        self.after(160, self._animate_gradient)
-
-    def _lower_gradient(self) -> None:
-        self.tk.call("lower", self.gradient_canvas._w)
 
     def _refresh_responsive_layout(self, width: int | None = None) -> None:
         current_width = width or self.winfo_width()
