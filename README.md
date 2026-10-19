@@ -40,6 +40,8 @@ the mac launcher creates its own `.venv`, installs `yt-dlp` there, and writes la
 
 the folder opens when the run finishes.
 
+any shape of apple music playlist link works: the modern page, an old `itunes.apple.com` link, a `geo.` or `embed.` share link, one with a trailing slash or tracking parameters, or one pasted without the `https://` in front. they all point at the same playlist, so the app reads them all as one.
+
 ## controls
 
 - `pause`: pause a long run

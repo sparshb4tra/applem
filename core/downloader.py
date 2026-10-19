@@ -150,9 +150,80 @@ def _browser_headers(referer: str | None = None) -> dict[str, str]:
     return headers
 
 
-def _is_valid_apple_playlist_url(url: str) -> bool:
-    clean = url.strip()
-    return clean.startswith("https://music.apple.com/") and "/playlist/" in clean
+# Apple hands the same playlist out through several link shapes: the modern
+# page, a legacy itunes.apple.com address, and the geo./embed. hosts, each with
+# or without the playlist's name in front of its id, often with a trailing
+# slash or a tracking query left on the end. Only the canonical page answers
+# with the track list the app reads: a trailing slash is a hard 404, and the
+# same id asked for over an embed link comes back as a stub without the tracks.
+# So a pasted link is turned into the canonical page URL before anything is
+# fetched, and everything downstream works from that one address.
+APPLE_LINK_HOSTS = frozenset(
+    {"music.apple.com", "geo.music.apple.com", "itunes.apple.com", "embed.music.apple.com"}
+)
+PLAYLIST_ID_PREFIX = "pl."
+STOREFRONT_PATTERN = re.compile(r"[a-z]{2}")
+
+
+def _canonical_playlist_url(url: str) -> str:
+    """The page URL for a pasted playlist link, whatever shape it arrived in.
+
+    Raises `PlaylistDownloaderError` for a link that is not a playlist link, so
+    callers get the user-facing message without knowing the link's shapes.
+    """
+    parts = _playlist_link_parts(url)
+    if parts is None:
+        raise PlaylistDownloaderError(
+            "That doesn't look like an Apple Music playlist link. Open the playlist in "
+            "Apple Music, use Share then Copy Link, and paste the whole link "
+            "(it looks like https://music.apple.com/us/playlist/name/pl.xxxxxxxx)."
+        )
+    storefront, playlist_id = parts
+    return f"https://music.apple.com/{storefront}/playlist/{playlist_id}"
+
+
+def _playlist_link_parts(url: str) -> tuple[str, str] | None:
+    """The (storefront, playlist id) a pasted link points at, or None.
+
+    The id is the last path segment. The playlist's name in front of it is
+    optional (`/us/playlist/pl.123` and `/us/playlist/top-100/pl.123` are pages
+    for the same playlist), so a lone segment only counts as an id when it
+    carries the `pl.` prefix Apple gives ids: `/us/playlist/top-100` is a page
+    that still needs the rest of the link, and asking Apple for it is a 404.
+    """
+    text = url.strip()
+    parsed = urlparse(text)
+    if parsed.scheme not in {"http", "https"}:
+        # A link copied from somewhere that dropped the scheme (`music.apple.com/...`)
+        # or a scheme-relative one (`//music.apple.com/...`) still names the playlist,
+        # so it is read as if it had one. Refusing those told the user a link that
+        # works is not a link; the host check below is what keeps other hosts out.
+        parsed = urlparse(text if text.startswith("//") else f"//{text}")
+    if (parsed.hostname or "").casefold() not in APPLE_LINK_HOSTS:
+        return None
+
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    lowered = [segment.casefold() for segment in segments]
+    if "playlist" not in lowered:
+        return None
+    playlist_at = lowered.index("playlist")
+    storefront = segments[playlist_at - 1].casefold() if playlist_at else "us"
+    after_playlist = segments[playlist_at + 1 :]
+
+    ids = [
+        segment for segment in after_playlist if segment.casefold().startswith(PLAYLIST_ID_PREFIX)
+    ]
+    if ids:
+        playlist_id = ids[-1]
+    elif len(after_playlist) > 1:
+        # No `pl.` segment to go on, but the id sits after the name.
+        playlist_id = after_playlist[-1]
+    else:
+        return None
+
+    if not STOREFRONT_PATTERN.fullmatch(storefront):
+        storefront = "us"
+    return storefront, playlist_id
 
 
 def _fetch_playlist_page(url: str, controls: DownloadControls | None = None) -> str:
@@ -432,24 +503,23 @@ def _interruptible_sleep(seconds: float, controls: DownloadControls | None) -> N
 
 
 def read_playlist_tracks(url: str, controls: DownloadControls | None = None) -> list[tuple[str, str]]:
-    if not _is_valid_apple_playlist_url(url):
-        raise PlaylistDownloaderError(
-            "That doesn't look like an Apple Music link. It should start with music.apple.com/..."
-        )
+    playlist_url = _canonical_playlist_url(url)
 
     try:
-        html = _fetch_playlist_page(url, controls=controls)
+        html = _fetch_playlist_page(playlist_url, controls=controls)
     except DownloadCancelled:
         raise
     except Exception as exc:
         raise PlaylistDownloaderError(_fetch_error_message(exc)) from exc
 
     tracks = _extract_tracks_from_apple_json_scripts(html)
-    token_candidates = [] if tracks else _discover_musickit_tokens(html, page_url=url, controls=controls)
+    token_candidates = (
+        [] if tracks else _discover_musickit_tokens(html, page_url=playlist_url, controls=controls)
+    )
     for token in token_candidates:
         _wait_if_paused(controls)
         try:
-            tracks = _fetch_playlist_tracks_via_api(url, token=token, controls=controls)
+            tracks = _fetch_playlist_tracks_via_api(playlist_url, token=token, controls=controls)
         except DownloadCancelled:
             # The API walk is the longest part of a read, so a cancel raised
             # inside it has to stop the run, not be swallowed and answered with
@@ -783,17 +853,14 @@ def download_playlist(
     skip_existing: bool = True,
     controls: DownloadControls | None = None,
 ) -> list[tuple[str, str]]:
-    if not _is_valid_apple_playlist_url(url):
-        raise PlaylistDownloaderError(
-            "That doesn't look like an Apple Music link. It should start with music.apple.com/..."
-        )
+    playlist_url = _canonical_playlist_url(url)
     if output_format not in {"mp3", "wav"}:
         raise PlaylistDownloaderError("Unsupported output format.")
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     log_callback("Reading Apple Music playlist...")
-    tracks = read_playlist_tracks(url, controls=controls)
+    tracks = read_playlist_tracks(playlist_url, controls=controls)
 
     total = len(tracks)
     log_callback(f"Found {total} song(s). Starting downloads...")
