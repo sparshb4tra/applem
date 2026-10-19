@@ -36,6 +36,8 @@ MAX_SCRIPT_BUNDLES = 20
 # this is the wait for one page of that walk rather than for the whole read.
 API_FETCH_TIMEOUT_SECONDS = 20
 
+API_BASE_URL = "https://amp-api.music.apple.com"
+
 # Pause and cancel are checked in short steps, and waiting for a retry counts as
 # part of the run the user is allowed to stop.
 CONTROL_POLL_SECONDS = 0.25
@@ -734,6 +736,78 @@ def _playlist_id_from_url(url: str) -> str:
     return parts[-1] if parts else ""
 
 
+def _api_song_resources(payload: object) -> list[dict]:
+    """Every song resource in one page of Apple's playlist read.
+
+    Apple hands the same tracks out in more than one arrangement, and which one
+    arrives is not something this app gets to choose: the playlist resource
+    carries them inline under `relationships.tracks.data`, a page of its `tracks`
+    relationship (which is what a pagination link points at) is a collection
+    whose own top level `data` holds the songs, and a JSON:API shaped response
+    parks them in `included`. Reading only `included` meant every read of the
+    first two shapes came back with no songs at all, and the user was told their
+    public playlist could not be read: the exact case this read exists for. All
+    three are read here, and only from the place each shape keeps the track list,
+    so a song from some other part of the response cannot be mistaken for one.
+    """
+    if not isinstance(payload, dict):
+        return []
+
+    candidates: list[object] = []
+    data = payload.get("data")
+    if isinstance(data, list):
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "songs":
+                # A track collection page: the songs are the whole response.
+                candidates.append(item)
+                continue
+            # The playlist resource: its `tracks` relationship is the track list.
+            relationships = item.get("relationships")
+            if isinstance(relationships, dict):
+                tracks_relationship = relationships.get("tracks")
+                if isinstance(tracks_relationship, dict):
+                    candidates.append(tracks_relationship.get("data"))
+    included = payload.get("included")
+    if isinstance(included, list):
+        candidates.extend(included)
+
+    resources: list[dict] = []
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            candidate = [candidate]
+        if not isinstance(candidate, list):
+            continue
+        for item in candidate:
+            if isinstance(item, dict) and item.get("type") == "songs":
+                resources.append(item)
+    return resources
+
+
+def _api_next_page_url(payload: object) -> str | None:
+    """The next page of an API response, as a full URL, or None at the end.
+
+    The first page of a read is the playlist itself and links on through its
+    `tracks` relationship; the pages after that are track collections with a
+    `next` of their own. An absolute link is kept as it is.
+    """
+    candidates: list[object] = []
+    if isinstance(payload, dict):
+        data = payload.get("data")
+        if isinstance(data, list) and data and isinstance(data[0], dict):
+            relationships = data[0].get("relationships")
+            if isinstance(relationships, dict):
+                tracks_relationship = relationships.get("tracks")
+                if isinstance(tracks_relationship, dict):
+                    candidates.append(tracks_relationship.get("next"))
+        candidates.append(payload.get("next"))
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return urljoin(API_BASE_URL, candidate.strip())
+    return None
+
+
 def _fetch_playlist_tracks_via_api(
     url: str,
     token: str,
@@ -750,19 +824,18 @@ def _fetch_playlist_tracks_via_api(
     if not playlist_id:
         return []
 
-    base = "https://amp-api.music.apple.com"
     first_url = (
-        f"{base}/v1/catalog/{storefront}/playlists/{playlist_id}"
+        f"{API_BASE_URL}/v1/catalog/{storefront}/playlists/{playlist_id}"
         f"?include=tracks&limit[tracks]=300"
     )
 
     tracks: list[tuple[str, str]] = []
-    next_path: str | None = first_url
+    next_url: str | None = first_url
 
-    while next_path:
+    while next_url:
         _wait_if_paused(controls)
         req = Request(
-            next_path,
+            next_url,
             headers={
                 "Authorization": f"Bearer {token}",
                 "Origin": "https://music.apple.com",
@@ -776,29 +849,16 @@ def _fetch_playlist_tracks_via_api(
         with urlopen(req, timeout=API_FETCH_TIMEOUT_SECONDS) as resp:  # noqa: S310
             payload = json.loads(resp.read().decode("utf-8", errors="ignore"))
 
-        # The included tracks are in the "included" list with type "songs".
-        included = payload.get("included", []) or []
-        for item in included:
-            if item.get("type") != "songs":
+        for resource in _api_song_resources(payload):
+            attrs = resource.get("attributes")
+            if not isinstance(attrs, dict):
                 continue
-            attrs = item.get("attributes") or {}
-            title = (attrs.get("name") or "").strip()
-            artist = (attrs.get("artistName") or "").strip()
+            title = str(attrs.get("name") or "").strip()
+            artist = str(attrs.get("artistName") or "").strip()
             if title and artist:
                 tracks.append((title, artist))
 
-        # Pagination: playlist -> relationships -> tracks -> next
-        data = payload.get("data") or []
-        rel_next = None
-        if data and isinstance(data, list):
-            relationships = (data[0].get("relationships") or {}) if isinstance(data[0], dict) else {}
-            tracks_rel = relationships.get("tracks") or {}
-            rel_next = tracks_rel.get("next")
-
-        if rel_next:
-            next_path = base + rel_next
-        else:
-            next_path = None
+        next_url = _api_next_page_url(payload)
 
         if len(tracks) >= 2000:
             break
