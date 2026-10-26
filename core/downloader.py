@@ -52,6 +52,12 @@ RETRYABLE_HTTP_STATUS = {408, 425, 429, 500, 502, 503, 504}
 # it, so it has to describe the run that just ended, not an older one.
 FAILED_TRACKS_FILENAME = "failed_downloads.txt"
 
+# yt-dlp returning without an exception is not proof that a song landed: a
+# search that matches nothing finishes quietly, a postprocessing step can leave
+# no output behind, and the run has already moved on to the next track. The
+# reason below is what the failure report and the log say in that case.
+NO_SONG_SAVED_REASON = "yt-dlp finished without saving a playable file for this song."
+
 
 def _fetch_error_message(exc: Exception) -> str:
     """Turn a fetch failure into something a user can actually act on."""
@@ -971,6 +977,20 @@ def download_playlist(
                 ffmpeg_path=ffmpeg_path,
                 controls=controls,
             )
+            # The download above can return cleanly and still have written
+            # nothing: a YouTube search with no usable match ends without an
+            # error, and a conversion that produced no output leaves the folder
+            # empty. Saying OK there is the worst outcome a downloader can have:
+            # the user reads "Download complete", the folder does not hold the
+            # song, and the gap only shows up in a later verification. So a
+            # track counts as done only when its own file is in the folder, and
+            # whatever an empty attempt did write is dropped first, because a
+            # file of a few bytes left next to the report of a failed song is a
+            # leftover the user would have to clean up by hand.
+            if not _is_complete_audio_file(expected_path):
+                if expected_path.exists():
+                    _remove_superseded_track_file(expected_path, log_callback)
+                raise PlaylistDownloaderError(NO_SONG_SAVED_REASON)
             log_callback(f"OK  {title} - {artist}")
             if skip_existing:
                 # A playlist can list the same song twice. The second entry must

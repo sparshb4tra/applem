@@ -15,6 +15,7 @@ no apple login. no cookies. no browser extension. just the playlist url.
 - replaces a cut off copy instead of keeping two files of the same song
 - lets you pause, resume, cancel, verify, and retry missing tracks
 - writes failed tracks to `failed_downloads.txt`, and clears a stale report when a run ends with none
+- calls a song done only when its file is really in the folder, so a download that saved nothing is retried instead of announced
 - writes verification results to `verification_report.txt`
 
 ## setup

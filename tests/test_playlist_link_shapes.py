@@ -38,7 +38,12 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import core.downloader as downloader
-from core.downloader import PlaylistDownloaderError, download_playlist, read_playlist_tracks
+from core.downloader import (
+    PlaylistDownloaderError,
+    _track_output_path,
+    download_playlist,
+    read_playlist_tracks,
+)
 
 PLAYLIST_ID = "pl.123"
 CANONICAL_URL = f"https://music.apple.com/us/playlist/{PLAYLIST_ID}"
@@ -207,7 +212,16 @@ class PlaylistLinkShapeTests(unittest.TestCase):
         )
 
         def fake_download(**kwargs: object) -> None:
-            return None
+            # A run only counts a track as done when its file is there, so the
+            # stand-in has to write one: this test is about which URL the
+            # download reads, not about what yt-dlp leaves behind.
+            _track_output_path(
+                Path(kwargs["output_dir"]),
+                str(kwargs["output_format"]),
+                int(kwargs["index"]),
+                str(kwargs["title"]),
+                str(kwargs["artist"]),
+            ).write_bytes(b"m" * 2048)
 
         downloader._download_track_from_youtube = fake_download  # type: ignore[assignment]
         failures = download_playlist(
