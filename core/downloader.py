@@ -386,11 +386,14 @@ def _is_complete_audio_file(path: Path) -> bool:
 def _remove_superseded_track_file(path: Path, log_callback: LogCallback | None = None) -> bool:
     """Drop a file that carries a song's name but is not a finished download.
 
-    The file has this app's own numbering, this song's name and a size no audio
-    file has, so it is the remains of an attempt that was cut off, not something
-    the user put there. The run that decided to fetch the song again writes it
-    under the number that run gives it, and a broken copy left next to the new
-    one would sit in the folder for good.
+    Two kinds of remains land here. A copy too small to hold any audio is an
+    earlier attempt that wrote a few bytes; the output of a conversion that was
+    cut off is the other kind, and it runs to megabytes, because yt-dlp's audio
+    step writes straight to the song's final name. Both carry this app's own
+    numbering and this song's name, so neither is something the user put there.
+    The run that decided to fetch the song again writes it under the number that
+    run gives it, and a broken copy left next to the new one would sit in the
+    folder for good.
     """
     try:
         # Missing counts as gone: another entry of the same song in one playlist
@@ -966,6 +969,13 @@ def download_playlist(
         # this looks the track up by name rather than by number.
         _remove_unfinished_track_files(output_dir, output_format, title, artist, log_callback)
 
+        # Whether the song's own file was there before this attempt. A part left
+        # by an earlier attempt has to go, but a good copy the folder already
+        # holds is not this attempt's to take (with "skip songs already
+        # downloaded" off, that copy is what the user already has), so only what
+        # turns up at this path while the attempt runs belongs to it.
+        song_existed_before = expected_path.exists()
+
         try:
             _download_track_from_youtube(
                 query=f"{title} {artist} official audio",
@@ -1006,8 +1016,18 @@ def download_playlist(
             failures.append((track_name, reason))
             error_callback(track_name, reason)
             log_callback(f"WARN  {title} - {artist} (failed)")
-            # Whatever the failed attempt wrote is not a song: drop it.
+            # Whatever the failed attempt wrote is not a song: drop it. That
+            # covers the converter's own output too, which yt-dlp writes straight
+            # to the song's final name (there is no temp name to sweep up when
+            # the source container differs from the chosen one). An ffmpeg run
+            # that dies part way, a full disk, a machine that sleeps mid
+            # conversion, all leave megabytes of a cut off song sitting under the
+            # name of a finished one, which passes every size test there is: this
+            # run reports the track as failed, so every later run would instead
+            # read those remains as downloaded and never fetch the song again.
             _remove_unfinished_track_files(output_dir, output_format, title, artist, log_callback)
+            if not song_existed_before and expected_path.exists():
+                _remove_superseded_track_file(expected_path, log_callback)
 
     _write_failed_tracks(output_dir, failures, log_callback)
     return failures

@@ -9,7 +9,11 @@ looking at files that are not songs, that never show up in the verification
 report, and that a later retry can resume into.
 
 `download_playlist` now clears the leftovers of the track it is about to try
-and of the track that just failed, which is what these tests pin down.
+and of the track that just failed, which is what these tests pin down. That
+includes the converter's own output: yt-dlp writes its conversion straight to
+the song's final name, so a conversion cut off part way leaves the front of a
+song under the name of a finished one, where nothing about its size gives it
+away.
 
 A leftover is found by the song's name rather than by the number in front of
 it: that number is the position the song had when the attempt was made, and a
@@ -184,7 +188,9 @@ class DownloadCleanupTests(unittest.TestCase):
         self.addCleanup(setattr, module, name, getattr(module, name))
         setattr(module, name, value)
 
-    def _fake_download(self, leftover: str, error: Exception) -> None:
+    def _fake_download(
+        self, leftover: str, error: Exception, payload: bytes = b"partial bytes"
+    ) -> None:
         def fake(
             query,
             title,
@@ -196,18 +202,19 @@ class DownloadCleanupTests(unittest.TestCase):
             controls=None,
         ):
             stem = _track_file_stem(index, title, artist)
-            (Path(output_dir) / f"{stem}.{leftover}").write_bytes(b"partial bytes")
+            (Path(output_dir) / f"{stem}.{leftover}").write_bytes(payload)
             raise error
 
         self._patch(downloader, "_download_track_from_youtube", fake)
 
-    def _run(self) -> list[tuple[str, str]]:
+    def _run(self, skip_existing: bool = True) -> list[tuple[str, str]]:
         return download_playlist(
             url=PLAYLIST_URL,
             output_dir=self.output_dir,
             progress_callback=lambda current, total, name: None,
             log_callback=self.logs.append,
             error_callback=lambda track, reason: self.errors.append((track, reason)),
+            skip_existing=skip_existing,
         )
 
     def _files(self) -> list[str]:
@@ -229,6 +236,54 @@ class DownloadCleanupTests(unittest.TestCase):
         # The failure file stays, the unusable download does not.
         self.assertEqual(self._files(), ["failed_downloads.txt"])
         self.assertTrue(any("CLEAN" in line for line in self.logs))
+
+    def test_a_cut_off_conversion_does_not_stay_under_the_song_name(self) -> None:
+        # yt-dlp's audio step writes its conversion straight to the song's final
+        # name (the temp name and the final name are the same file whenever the
+        # source container differs from the chosen one), so a converter that dies
+        # part way leaves the front of the song sitting there: 1.5 MB of it here,
+        # which is what a killed ffmpeg left in a probe, and far past the size
+        # this app calls a finished song. The run reports the track as failed, so
+        # the remains have to go with it: left in place, every later run would
+        # read them as an already downloaded song, skip the track, and the user
+        # would keep a cut off half of a song that verification calls present.
+        self._fake_download(
+            "mp3",
+            DownloadError("Postprocessing: audio conversion failed"),
+            payload=b"m" * 1_572_864,
+        )
+        failures = self._run()
+
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(self._files(), ["failed_downloads.txt"])
+        self.assertTrue(any("CLEAN" in line and "incomplete copy" in line for line in self.logs))
+
+    def test_a_copy_the_folder_already_held_survives_a_failed_attempt(self) -> None:
+        # With "skip songs already downloaded" off, this run writes over the copy
+        # the user has. An attempt that fails before writing anything must leave
+        # that copy alone: it is the only one there is, and this run never
+        # touched it.
+        existing = self.output_dir / f"{STEM}.mp3"
+        existing.write_bytes(b"m" * 2048)
+
+        def fake(
+            query,
+            title,
+            artist,
+            index,
+            output_dir,
+            output_format,
+            ffmpeg_path,
+            controls=None,
+        ):
+            raise DownloadError("unable to download video data")
+
+        self._patch(downloader, "_download_track_from_youtube", fake)
+        failures = self._run(skip_existing=False)
+
+        self.assertEqual(len(failures), 1)
+        self.assertTrue(existing.exists())
+        self.assertEqual(self._files(), [f"{STEM}.mp3", "failed_downloads.txt"])
 
     def test_a_stale_partial_from_a_killed_run_is_cleared_before_the_retry(self) -> None:
         stale = self.output_dir / f"{STEM}.webm"
